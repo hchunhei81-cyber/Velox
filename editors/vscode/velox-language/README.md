@@ -11,13 +11,29 @@ VS Code language support for the Velox programming language.
 - Automatic bracket pairing and indentation
 - Comment toggling and code folding
 - Workspace editor color customization
+- Live compiler diagnostics with source ranges
+- Semantic completion for functions, structs, parameters and local variables
+- Struct field completion after member access
+- Hover information for indexed symbols
+- Go to Definition for symbols in the current document
+
+## Language server
+
+The extension starts the Velox language server automatically when a Velox file is opened in a workspace containing a Velox `Cargo.toml` project.
+
+The language server is built with Cargo when its release binary is missing. Rust and Cargo must therefore be installed and available to the extension.
+
+To inspect server output, open **View → Output** and select **Velox Language Server**.
 
 ## Install locally
 
 1. Open this folder in VS Code:
+
    `editors/vscode/velox-language`
+
 2. Press `F5` to launch an Extension Development Host.
-3. Open a `.vx` file in the new window.
+
+3. Open a `.vx` file inside a Velox project.
 
 Alternatively, use **Extensions: Install from VSIX...** after packaging the extension.
 
@@ -38,5 +54,6 @@ Alternatively, use **Extensions: Install from VSIX...** after packaging the exte
 
 ## Current limitations
 
-This extension currently uses TextMate grammar and snippets. Semantic completion,
-go-to-definition, diagnostics and formatting require a future Velox language server.
+- Go to Definition currently resolves symbols within the open document; cross-file navigation is not implemented.
+- Symbol information is derived from the document's token stream and is not yet backed by a complete compiler semantic index.
+- Formatting and rename support are not implemented.
