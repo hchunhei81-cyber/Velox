@@ -55,3 +55,4 @@ example/
 _fast_math.py
 # VS Code extension dependencies
 /editors/vscode/velox-language/node_modules/
+veloxc
