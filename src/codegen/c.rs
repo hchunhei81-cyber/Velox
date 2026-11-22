@@ -282,6 +282,7 @@ impl CEmitter {
 
     fn expr_ty(&self, e: &Expr) -> Ty {
         match e {
+            Expr::Located(inner, _) => self.expr_ty(inner),
             Expr::Int(_) => Ty::I64,
             Expr::Float(_) => Ty::F64,
             Expr::Bool(_) => Ty::Bool,
@@ -323,6 +324,7 @@ impl CEmitter {
 
     fn expr(&mut self, e: &Expr) -> String {
         match e {
+            Expr::Located(inner, _) => self.expr(inner),
             Expr::Not(inner) => format!("(!{})", self.expr(inner)),
             Expr::Neg(inner) => format!("(-{})", self.expr(inner)),
             Expr::Int(n) => n.to_string(),
@@ -442,6 +444,7 @@ struct ParallelAccess {
 
 fn expr_root_var(expr: &Expr) -> Option<&str> {
     match expr {
+        Expr::Located(inner, _) => expr_root_var(inner),
         Expr::Var(name) => Some(name),
         Expr::Field(base, _) => expr_root_var(base),
         _ => None,
@@ -579,6 +582,7 @@ fn count_parallel_reads(
     access: &mut ParallelAccess,
 ) {
     match expr {
+        Expr::Located(inner, _) => count_parallel_reads(inner, outer, locals, access),
         Expr::Var(name) => {
             if outer.contains(name) && !locals.contains(name) {
                 *access.reads.entry(name.clone()).or_insert(0) += 1;
@@ -607,12 +611,19 @@ fn count_parallel_reads(
     }
 }
 
+fn strip_located(mut expr: &Expr) -> &Expr {
+    while let Expr::Located(inner, _) = expr {
+        expr = inner;
+    }
+    expr
+}
+
 fn is_reduction_add(expr: &Expr, target: &str) -> bool {
-    match expr {
+    match strip_located(expr) {
         Expr::Bin(left, BinOp::Add, right) => {
-            (matches!(left.as_ref(), Expr::Var(name) if name == target)
+            (matches!(strip_located(left), Expr::Var(name) if name == target)
                 && count_var_occurrences(right, target) == 0)
-                || (matches!(right.as_ref(), Expr::Var(name) if name == target)
+                || (matches!(strip_located(right), Expr::Var(name) if name == target)
                     && count_var_occurrences(left, target) == 0)
         }
         _ => false,
@@ -621,6 +632,7 @@ fn is_reduction_add(expr: &Expr, target: &str) -> bool {
 
 fn count_var_occurrences(expr: &Expr, target: &str) -> usize {
     match expr {
+        Expr::Located(inner, _) => count_var_occurrences(inner, target),
         Expr::Not(inner) | Expr::Neg(inner) => count_var_occurrences(inner, target),
 
         Expr::Var(name) => usize::from(name == target),

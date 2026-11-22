@@ -223,6 +223,27 @@ Full documentation lives in [`docs/errors/`](docs/errors/). Query any of them in
 
 ---
 
+## Analysis API and source diagnostics
+
+The library exposes `analyze_source(source, origin)` for editor and tooling
+integration. It runs the lexer, parser, and type checker without generating C
+or invoking Clang.
+
+`AnalysisDiagnostic` provides:
+
+- `code`: optional compiler error code.
+- `message`: human-readable diagnostic.
+- `severity`: `Error` or `Warning`.
+- `start` / `end`: UTF-8 byte offsets into the original source.
+- `line` / `column`: 1-based source position when available.
+
+Columns count Unicode scalar values, not UTF-8 bytes or UTF-16 code units.
+Language-server integrations should convert columns to the position encoding
+negotiated with the editor (typically UTF-16).
+
+Expression locations are preserved through parsing and type checking so
+diagnostics can point to the innermost failing expression or operand.
+
 ## Repository layout
 
 ```
@@ -304,4 +325,4 @@ Code style: `cargo fmt` + `cargo clippy -- -D warnings`.
 
 ## License
 
-MIT OR Apache-2.0
+BSD 3-Clause
