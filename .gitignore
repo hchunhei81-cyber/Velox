@@ -1,0 +1,34 @@
+# Rust build output
+/target/
+**/*.rs.bk
+Cargo.lock.bak
+
+# Velox compiler artifacts
+# The C backend emits <out>.c next to the binary — never commit those.
+*.c
+# Keep hand-written C if any (none today, but be explicit):
+!src/**/*.c
+
+# Built executables (veloxc writes outputs without extensions)
+/hello
+/par
+/bad
+/a.out
+# Catch any bare executable the user built at repo root:
+/*.out
+
+# Editor / OS noise
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Docs output (mdbook / velox doc, when added later)
+/docs/book/
+/docs/errors/_site/
+
+# Local scratch
+/tmp/
+*.log
