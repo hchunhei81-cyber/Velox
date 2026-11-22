@@ -5,6 +5,7 @@ pub enum Tok {
     Float(f64),
     Str(String),
     Fn,
+    Struct,
     Let,
     Mut,
     Return,
@@ -13,6 +14,8 @@ pub enum Tok {
     While,
     For,
     In,
+    True,
+    False,
     Parallel,
     Public,
     Private,
@@ -26,6 +29,7 @@ pub enum Tok {
     Colon,
     Arrow,
     DotDot,
+    Dot,
     Plus,
     Minus,
     Star,
@@ -37,7 +41,28 @@ pub enum Tok {
     Gt,
     Le,
     Ge,
+    AndAnd,
+    OrOr,
+    Bang,
     Eof,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Span {
+    pub start: usize,
+    pub end: usize,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SpannedToken {
+    pub kind: Tok,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct LexError {
+    pub message: String,
+    pub span: Span,
 }
 
 pub struct Lexer<'a> {
@@ -67,6 +92,24 @@ impl<'a> Lexer<'a> {
     }
 
     pub fn tokenize(&mut self) -> Result<Vec<Tok>, String> {
+        self.tokenize_inner()
+            .map(|tokens| tokens.into_iter().map(|token| token.kind).collect())
+    }
+
+    pub fn tokenize_spanned(&mut self) -> Result<Vec<SpannedToken>, LexError> {
+        self.tokenize_inner().map_err(|message| {
+            let start = self.pos.saturating_sub(1);
+            LexError {
+                message,
+                span: Span {
+                    start,
+                    end: self.pos,
+                },
+            }
+        })
+    }
+
+    fn tokenize_inner(&mut self) -> Result<Vec<SpannedToken>, String> {
         let mut out = Vec::new();
         loop {
             while self.peek().is_ascii_whitespace() {
@@ -79,9 +122,19 @@ impl<'a> Lexer<'a> {
                 continue;
             }
             let c = self.peek();
-            if c == 0 {
-                out.push(Tok::Eof);
+            if self.pos >= self.src.len() {
+                out.push(SpannedToken {
+                    kind: Tok::Eof,
+                    span: Span {
+                        start: self.pos,
+                        end: self.pos,
+                    },
+                });
                 break;
+            }
+            let token_start = self.pos;
+            if c == 0 {
+                return Err("NUL byte is not allowed in source".into());
             }
 
             if c.is_ascii_alphabetic() || c == b'_' {
@@ -92,8 +145,9 @@ impl<'a> Lexer<'a> {
                 let s = std::str::from_utf8(&self.src[start..self.pos])
                     .unwrap()
                     .to_string();
-                out.push(match s.as_str() {
+                let kind = match s.as_str() {
                     "fn" => Tok::Fn,
+                    "struct" => Tok::Struct,
                     "let" => Tok::Let,
                     "mut" => Tok::Mut,
                     "return" => Tok::Return,
@@ -102,11 +156,20 @@ impl<'a> Lexer<'a> {
                     "while" => Tok::While,
                     "for" => Tok::For,
                     "in" => Tok::In,
+                    "true" => Tok::True,
+                    "false" => Tok::False,
                     "parallel" => Tok::Parallel,
                     "public" => Tok::Public,
                     "private" => Tok::Private,
                     "export" => Tok::Export,
                     _ => Tok::Ident(s),
+                };
+                out.push(SpannedToken {
+                    kind,
+                    span: Span {
+                        start: token_start,
+                        end: self.pos,
+                    },
                 });
                 continue;
             }
@@ -116,7 +179,7 @@ impl<'a> Lexer<'a> {
                 while self.peek().is_ascii_digit() {
                     self.bump();
                 }
-                // 浮点：3.14  → 检查 . 后跟数字
+                // Floating-point literal: for example, 3.14; require a digit after the decimal point.
                 if self.peek() == b'.' && self.peek2().is_ascii_digit() {
                     self.bump(); // .
                     while self.peek().is_ascii_digit() {
@@ -126,14 +189,26 @@ impl<'a> Lexer<'a> {
                         .unwrap()
                         .parse()
                         .map_err(|e| format!("bad float: {}", e))?;
-                    out.push(Tok::Float(f));
+                    out.push(SpannedToken {
+                        kind: Tok::Float(f),
+                        span: Span {
+                            start: token_start,
+                            end: self.pos,
+                        },
+                    });
                     continue;
                 }
                 let n: i64 = std::str::from_utf8(&self.src[start..self.pos])
                     .unwrap()
                     .parse()
                     .map_err(|e| format!("bad int: {}", e))?;
-                out.push(Tok::Int(n));
+                out.push(SpannedToken {
+                    kind: Tok::Int(n),
+                    span: Span {
+                        start: token_start,
+                        end: self.pos,
+                    },
+                });
                 continue;
             }
 
@@ -141,14 +216,20 @@ impl<'a> Lexer<'a> {
                 self.bump();
                 let mut s = String::new();
                 loop {
+                    if self.pos >= self.src.len() {
+                        return Err("unterminated string".into());
+                    }
                     let ch = self.bump();
                     if ch == 0 {
-                        return Err("unterminated string".into());
+                        return Err("NUL byte is not allowed in source; use the \\0 escape".into());
                     }
                     if ch == b'"' {
                         break;
                     }
                     if ch == b'\\' {
+                        if self.pos >= self.src.len() {
+                            return Err("unterminated escape sequence".into());
+                        }
                         let e = self.bump();
                         s.push(match e {
                             b'n' => '\n',
@@ -160,7 +241,7 @@ impl<'a> Lexer<'a> {
                             _ => return Err(format!("bad escape \\{}", e as char)),
                         });
                     } else {
-                        // bump() 已读取首字节，从该字符的起始位置解码。
+                        // bump() has consumed the first byte; decode from the start of the character.
                         let start = self.pos - 1;
                         let rest = std::str::from_utf8(&self.src[start..])
                             .map_err(|e| format!("invalid UTF-8 in string: {}", e))?;
@@ -172,7 +253,13 @@ impl<'a> Lexer<'a> {
                         s.push(unicode_ch);
                     }
                 }
-                out.push(Tok::Str(s));
+                out.push(SpannedToken {
+                    kind: Tok::Str(s),
+                    span: Span {
+                        start: token_start,
+                        end: self.pos,
+                    },
+                });
                 continue;
             }
 
@@ -189,6 +276,23 @@ impl<'a> Lexer<'a> {
                 b'*' => Tok::Star,
                 b'/' => Tok::Slash,
                 b'%' => Tok::Percent,
+                b'&' => {
+                    if self.peek() == b'&' {
+                        self.bump();
+                        Tok::AndAnd
+                    } else {
+                        return Err("expected `&&`".into());
+                    }
+                }
+                b'|' => {
+                    if self.peek() == b'|' {
+                        self.bump();
+                        Tok::OrOr
+                    } else {
+                        return Err("expected `||`".into());
+                    }
+                }
+                b'!' => Tok::Bang,
                 b'-' => {
                     if self.peek() == b'>' {
                         self.bump();
@@ -226,12 +330,18 @@ impl<'a> Lexer<'a> {
                         self.bump();
                         Tok::DotDot
                     } else {
-                        return Err("unexpected '.'".into());
+                        Tok::Dot
                     }
                 }
                 _ => return Err(format!("unexpected char '{}'", c as char)),
             };
-            out.push(t);
+            out.push(SpannedToken {
+                kind: t,
+                span: Span {
+                    start: token_start,
+                    end: self.pos,
+                },
+            });
         }
         Ok(out)
     }

@@ -1,17 +1,7 @@
-mod ast;
-mod driver;
-mod ffi;
-mod lexer;
-mod parser;
-mod python;
-mod types;
-mod codegen {
-    pub mod c;
-}
-
 use std::env;
 use std::fs;
 use std::process;
+use veloxc::driver;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -45,7 +35,7 @@ fn main() {
 
     let src_path = &args[1];
 
-    // --py 模式
+    // --py mode
     if args.iter().any(|a| a == "--py") {
         let out_dir = find_after(&args, "-o").unwrap_or_else(|| ".".to_string());
         match driver::compile_py(src_path, &out_dir) {

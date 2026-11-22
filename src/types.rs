@@ -15,8 +15,78 @@ struct VarInfo {
     mutable: bool,
 }
 
+#[derive(Clone)]
+struct StructInfo {
+    fields: HashMap<String, Ty>,
+    vis: Vis,
+    origin: String,
+}
+
+fn validate_struct_cycles(structs: &[StructDef]) -> Result<(), String> {
+    let graph: HashMap<String, Vec<String>> = structs
+        .iter()
+        .map(|st| {
+            let deps = st
+                .fields
+                .iter()
+                .filter_map(|(_, ty)| {
+                    if let Ty::Struct(name) = ty {
+                        Some(name.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            (st.name.clone(), deps)
+        })
+        .collect();
+
+    fn visit(
+        name: &str,
+        graph: &HashMap<String, Vec<String>>,
+        state: &mut HashMap<String, u8>,
+    ) -> Result<(), String> {
+        match state.get(name).copied().unwrap_or(0) {
+            1 => {
+                return Err(format!(
+                    "E0308: struct `{}` has a recursive value type and cannot contain itself directly or indirectly",
+                    name
+                ))
+            }
+            2 => return Ok(()),
+            _ => {}
+        }
+
+        state.insert(name.to_string(), 1);
+
+        if let Some(deps) = graph.get(name) {
+            for dep in deps {
+                visit(dep, graph, state)?;
+            }
+        }
+
+        state.insert(name.to_string(), 2);
+        Ok(())
+    }
+
+    let mut state = HashMap::new();
+    for name in graph.keys() {
+        visit(name, &graph, &mut state)?;
+    }
+    Ok(())
+}
+
 pub struct Checker {
     fns: HashMap<String, FnInfo>,
+    structs: HashMap<String, StructInfo>,
+}
+
+fn field_root_var(expr: &Expr) -> Option<&str> {
+    match expr {
+        Expr::Var(name) => Some(name),
+        Expr::Field(base, _) => field_root_var(base),
+        _ => None,
+    }
 }
 
 impl Checker {
@@ -40,10 +110,16 @@ impl Checker {
                 origin: "<builtin>".into(),
             },
         );
-        Self { fns }
+        Self {
+            fns,
+            structs: HashMap::new(),
+        }
     }
 
-    pub fn register_extern(&mut self, name: &str, params: Vec<Ty>, ret: Ty) {
+    pub fn register_extern(&mut self, name: &str, params: Vec<Ty>, ret: Ty) -> Result<(), String> {
+        if self.fns.contains_key(name) {
+            return Err(format!("E0102: duplicate extern function `{}`", name));
+        }
         self.fns.insert(
             name.into(),
             FnInfo {
@@ -53,20 +129,60 @@ impl Checker {
                 origin: "<extern>".into(),
             },
         );
+        Ok(())
     }
 
     pub fn check(&mut self, p: &Program) -> Result<(), String> {
+        for st in &p.structs {
+            if self.structs.contains_key(&st.name) {
+                return Err(format!("E0105: duplicate struct `{}`", st.name));
+            }
+            let mut fields = HashMap::new();
+            for (name, ty) in &st.fields {
+                if *ty == Ty::Void {
+                    return Err(format!(
+                        "E0308: struct field `{}` cannot have type void",
+                        name
+                    ));
+                }
+                if fields.insert(name.clone(), ty.clone()).is_some() {
+                    return Err(format!("E0106: duplicate struct field `{}`", name));
+                }
+            }
+            self.structs.insert(
+                st.name.clone(),
+                StructInfo {
+                    fields,
+                    vis: st.vis,
+                    origin: st.origin.clone(),
+                },
+            );
+        }
+        validate_struct_cycles(&p.structs)?;
+
+        for st in &p.structs {
+            for (_, ty) in &st.fields {
+                self.validate_type(ty, &st.origin, false)?;
+            }
+        }
+        for f in &p.fns {
+            for (_, ty) in &f.params {
+                self.validate_type(ty, &f.origin, false)?;
+            }
+            self.validate_type(&f.ret, &f.origin, true)?;
+        }
         for f in &p.fns {
             if f.is_extern {
                 continue;
             }
             if let Some(prev) = self.fns.get(&f.name) {
-                if prev.origin != "<builtin>" && prev.origin != "<extern>" {
-                    return Err(format!(
-                        "E0102: fn `{}` 在 `{}` 和 `{}` 中重名",
-                        f.name, prev.origin, f.origin
-                    ));
-                }
+                return Err(format!(
+                    "E0102: function `{}` is defined more than once in `{}` and `{}`",
+                    f.name, prev.origin, f.origin
+                ));
+            }
+            if f.name == "main" && (!f.params.is_empty() || f.ret != Ty::Void) {
+                return Err("E0404: `main` must have the signature `fn main() -> void`".into());
             }
             self.fns.insert(
                 f.name.clone(),
@@ -86,10 +202,10 @@ impl Checker {
             let mut env = HashMap::new();
             for (name, ty) in &f.params {
                 if *ty == Ty::Void {
-                    return Err(format!("E0308: 参数 `{}` 不能是 void", name));
+                    return Err(format!("E0308: parameter `{}` cannot have type void", name));
                 }
                 if env.contains_key(name) {
-                    return Err(format!("E0103: 重复参数 `{}`", name));
+                    return Err(format!("E0103: duplicate parameter `{}`", name));
                 }
                 env.insert(
                     name.clone(),
@@ -102,12 +218,31 @@ impl Checker {
             let returns = self.check_block(&f.body, &mut env, &f.ret, &f.origin, false)?;
             if f.ret != Ty::Void && !returns {
                 return Err(format!(
-                    "E0400: fn `{}` 并非所有执行路径都有 return",
+                    "E0400: function `{}` does not return a value on every reachable path",
                     f.name
                 ));
             }
         }
         Ok(())
+    }
+
+    fn validate_type(&self, ty: &Ty, origin: &str, allow_void: bool) -> Result<(), String> {
+        match ty {
+            Ty::Void if !allow_void => {
+                Err("E0308: void is not allowed in this type position".into())
+            }
+            Ty::Struct(name) => {
+                let info = self
+                    .structs
+                    .get(name)
+                    .ok_or_else(|| format!("E0308: unknown struct type `{}`", name))?;
+                if info.vis == Vis::Private && info.origin != origin {
+                    return Err(format!("E0301: struct `{}` is private", name));
+                }
+                Ok(())
+            }
+            _ => Ok(()),
+        }
     }
 
     fn check_block(
@@ -143,13 +278,25 @@ impl Checker {
                 ty,
                 init,
             } => {
+                if env.contains_key(name) {
+                    return Err(format!(
+                        "E0104: variable `{}` is declared more than once in this scope",
+                        name
+                    ));
+                }
                 let it = self.check_expr(init, env, origin)?;
                 let t = ty.clone().unwrap_or(it.clone());
                 if t == Ty::Void {
-                    return Err(format!("E0308: `{}` 不能声明为 void", name));
+                    return Err(format!(
+                        "E0308: `{}` cannot be declared with type void",
+                        name
+                    ));
                 }
                 if t != it {
-                    return Err(format!("E0308: `{}` 声明 {:?}，实际 {:?}", name, t, it));
+                    return Err(format!(
+                        "E0308: `{}` is declared as {:?}, but its initializer has type {:?}",
+                        name, t, it
+                    ));
                 }
                 env.insert(
                     name.clone(),
@@ -164,37 +311,77 @@ impl Checker {
                 let v = env
                     .get(n)
                     .cloned()
-                    .ok_or_else(|| format!("E0100: 未定义变量 `{}`", n))?;
+                    .ok_or_else(|| format!("E0100: undefined variable `{}`", n))?;
                 if !v.mutable {
-                    return Err(format!("E0500: 不能修改不可变变量 `{}`，请使用 let mut", n));
+                    return Err(format!(
+                        "E0500: cannot modify immutable variable `{}`，use `let mut` instead",
+                        n
+                    ));
                 }
                 let t = self.check_expr(e, env, origin)?;
                 if v.ty != t {
-                    return Err(format!("E0308: `{}` 应为 {:?}，实际 {:?}", n, v.ty, t));
+                    return Err(format!(
+                        "E0308: `{}` must have type {:?}, but the expression has type {:?}",
+                        n, v.ty, t
+                    ));
+                }
+                Ok(false)
+            }
+            Stmt::FieldAssign(target, value) => {
+                let root = field_root_var(target).ok_or_else(|| {
+                    "E0500: field assignment target must be rooted in a local variable".to_string()
+                })?;
+
+                let var = env
+                    .get(root)
+                    .ok_or_else(|| format!("E0100: undefined variable `{}`", root))?;
+
+                if !var.mutable {
+                    return Err(format!(
+                        "E0500: cannot modify a field of immutable variable `{}`; declare it with `let mut`",
+                        root
+                    ));
+                }
+
+                if !matches!(target, Expr::Field(_, _)) {
+                    return Err("E0500: invalid field assignment target".into());
+                }
+
+                let expected = self.check_expr(target, env, origin)?;
+                let actual = self.check_expr(value, env, origin)?;
+
+                if expected != actual {
+                    return Err(format!(
+                        "E0308: field assignment type mismatch: expected {:?}, found {:?}",
+                        expected, actual
+                    ));
                 }
                 Ok(false)
             }
             Stmt::Return(e) => {
                 if parallel {
-                    return Err("E0403: 不允许在 parallel for 内使用 return".into());
+                    return Err("E0403: `return` is not allowed inside `parallel for`".into());
                 }
                 match e {
                     Some(expr) => {
                         let t = self.check_expr(expr, env, origin)?;
                         if &t != ret {
-                            return Err(format!("E0309: return {:?}，期望 {:?}", t, ret));
+                            return Err(format!(
+                                "E0309: return type is {:?}, but {:?} was expected",
+                                t, ret
+                            ));
                         }
                     }
                     None if *ret != Ty::Void => {
-                        return Err("E0309: 缺少返回值".into());
+                        return Err("E0309: missing return value".into());
                     }
                     None => {}
                 }
                 Ok(true)
             }
             Stmt::If(c, then_body, else_body) => {
-                if self.check_expr(c, env, origin)? != Ty::I64 {
-                    return Err("E0401: if 条件必须 i64".into());
+                if self.check_expr(c, env, origin)? != Ty::Bool {
+                    return Err("E0401: `if` condition must have type `bool`".into());
                 }
                 let mut a = env.clone();
                 let mut b = env.clone();
@@ -203,8 +390,8 @@ impl Checker {
                 Ok(ar && br)
             }
             Stmt::While(c, body) => {
-                if self.check_expr(c, env, origin)? != Ty::I64 {
-                    return Err("E0401: while 条件必须 i64".into());
+                if self.check_expr(c, env, origin)? != Ty::Bool {
+                    return Err("E0401: `while` condition must have type `bool`".into());
                 }
                 let mut inner = env.clone();
                 self.check_block(body, &mut inner, ret, origin, parallel)?;
@@ -221,12 +408,18 @@ impl Checker {
                 body,
             } => {
                 if parallel {
-                    return Err("E0402: 不支持嵌套 parallel for".into());
+                    return Err("E0402: nested `parallel for` loops are not supported".into());
+                }
+                if env.contains_key(var) {
+                    return Err(format!(
+                        "E0104: loop variable `{}` is declared more than once in this scope",
+                        var
+                    ));
                 }
                 if self.check_expr(start, env, origin)? != Ty::I64
                     || self.check_expr(end, env, origin)? != Ty::I64
                 {
-                    return Err("E0401: parallel for 范围必须 i64".into());
+                    return Err("E0401: `parallel for` bounds must have type `i64`".into());
                 }
                 let mut inner = env.clone();
                 inner.insert(
@@ -251,35 +444,131 @@ impl Checker {
         match e {
             Expr::Int(_) => Ok(Ty::I64),
             Expr::Float(_) => Ok(Ty::F64),
+            Expr::Bool(_) => Ok(Ty::Bool),
             Expr::Str(_) => Ok(Ty::Str),
+            Expr::StructInit(name, values) => {
+                let info = self
+                    .structs
+                    .get(name)
+                    .ok_or_else(|| format!("E0308: unknown struct `{}`", name))?;
+                if info.vis == Vis::Private && info.origin != origin {
+                    return Err(format!("E0301: struct `{}` is private", name));
+                }
+                let mut seen = HashMap::new();
+                for (field, expr) in values {
+                    let expected = info.fields.get(field).ok_or_else(|| {
+                        format!("E0308: struct `{}` has no field `{}`", name, field)
+                    })?;
+                    let actual = self.check_expr(expr, env, origin)?;
+                    if &actual != expected {
+                        return Err(format!(
+                            "E0308: type mismatch for field `{}.{}`",
+                            name, field
+                        ));
+                    }
+                    if seen.insert(field, ()).is_some() {
+                        return Err(format!(
+                            "E0308: field `{}` is initialized more than once",
+                            field
+                        ));
+                    }
+                }
+                if seen.len() != info.fields.len() {
+                    return Err(format!(
+                        "E0308: struct `{}` initialization is missing required fields",
+                        name
+                    ));
+                }
+                Ok(Ty::Struct(name.clone()))
+            }
+            Expr::Field(base, field) => {
+                let bt = self.check_expr(base, env, origin)?;
+                if let Ty::Struct(name) = bt {
+                    let info = self
+                        .structs
+                        .get(&name)
+                        .ok_or_else(|| format!("E0308: unknown struct `{}`", name))?;
+                    if info.vis == Vis::Private && info.origin != origin {
+                        return Err(format!("E0301: struct `{}` is private", name));
+                    }
+                    info.fields
+                        .get(field)
+                        .cloned()
+                        .ok_or_else(|| format!("E0308: struct `{}` has no field `{}`", name, field))
+                } else {
+                    Err("E0308: field access is only valid on struct values".into())
+                }
+            }
             Expr::Var(n) => env
                 .get(n)
                 .map(|v| v.ty.clone())
-                .ok_or_else(|| format!("E0100: 未定义变量 `{}`", n)),
+                .ok_or_else(|| format!("E0100: undefined variable `{}`", n)),
             Expr::Bin(l, op, r) => {
                 let a = self.check_expr(l, env, origin)?;
                 let b = self.check_expr(r, env, origin)?;
-                match (a, b) {
-                    (Ty::I64, Ty::I64) => Ok(Ty::I64),
-                    (Ty::F64, Ty::F64) => match op {
-                        BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div => Ok(Ty::F64),
-                        BinOp::Eq | BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge => Ok(Ty::I64),
-                        BinOp::Mod => Err("E0308: % 只支持 i64".into()),
-                    },
-                    (Ty::I64, Ty::F64) | (Ty::F64, Ty::I64) => {
-                        Err("E0308: 混合 i64/f64 需显式转换".into())
+
+                match op {
+                    BinOp::And | BinOp::Or => {
+                        if a == Ty::Bool && b == Ty::Bool {
+                            Ok(Ty::Bool)
+                        } else {
+                            Err("E0308: `&&` and `||` operands must both have type `bool`".into())
+                        }
                     }
-                    _ => Err("E0308: 运算符要求 i64 或 f64".into()),
+                    BinOp::Eq => {
+                        if a == b && matches!(a, Ty::I64 | Ty::F64 | Ty::Bool) {
+                            Ok(Ty::Bool)
+                        } else {
+                            Err("E0308: both operands of `==` must have the same comparable type".into())
+                        }
+                    }
+                    BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge => match (a, b) {
+                        (Ty::I64, Ty::I64) | (Ty::F64, Ty::F64) => Ok(Ty::Bool),
+                        (Ty::I64, Ty::F64) | (Ty::F64, Ty::I64) => {
+                            Err("E0308: mixed `i64` and `f64` operations require an explicit conversion".into())
+                        }
+                        _ => Err("E0308: comparison operands must have the same numeric type".into()),
+                    },
+                    BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod => {
+                        match (a, b) {
+                            (Ty::I64, Ty::I64) => Ok(Ty::I64),
+                            (Ty::F64, Ty::F64) if !matches!(op, BinOp::Mod) => Ok(Ty::F64),
+                            (Ty::F64, Ty::F64) => Err("E0308: `%` is only supported for `i64` operands".into()),
+                            (Ty::I64, Ty::F64) | (Ty::F64, Ty::I64) => {
+                                Err("E0308: mixed `i64` and `f64` operations require an explicit conversion".into())
+                            }
+                            _ => Err("E0308: arithmetic operators require numeric operands".into()),
+                        }
+                    }
+                }
+            }
+            Expr::Neg(inner) => {
+                let t = self.check_expr(inner, env, origin)?;
+                if matches!(t, Ty::I64 | Ty::F64) {
+                    Ok(t)
+                } else {
+                    Err("E0308: unary `-` requires a numeric operand".into())
+                }
+            }
+            Expr::Not(inner) => {
+                let t = self.check_expr(inner, env, origin)?;
+                if t == Ty::Bool {
+                    Ok(Ty::Bool)
+                } else {
+                    Err("E0308: the `!` operator requires a `bool` operand".into())
                 }
             }
             Expr::Call(n, args) => {
-                if n == "print" {
+                if n == "print" || n == "println" || n == "write" {
                     if args.len() != 1 {
-                        return Err("E0308: print 需要 1 个参数".into());
+                        return Err(format!("E0308: `{}` expects exactly one argument", n));
                     }
                     let t = self.check_expr(&args[0], env, origin)?;
-                    if t != Ty::I64 && t != Ty::F64 {
-                        return Err(format!("E0308: print 不支持 {:?}", t));
+                    if !matches!(t, Ty::I64 | Ty::F64 | Ty::Bool | Ty::Str) {
+                        return Err(format!(
+                            "E0308: `{}` does not support values of type {:?}",
+                            n, t
+                        ));
                     }
                     return Ok(Ty::Void);
                 }
@@ -287,20 +576,20 @@ impl Checker {
                     .fns
                     .get(n)
                     .cloned()
-                    .ok_or_else(|| format!("E0101: 未定义函数 `{}`", n))?;
+                    .ok_or_else(|| format!("E0101: undefined function `{}`", n))?;
                 if info.vis == Vis::Private
                     && info.origin != origin
                     && info.origin != "<builtin>"
                     && info.origin != "<extern>"
                 {
                     return Err(format!(
-                        "E0301: `{}` 是 `{}` 的私有函数，`{}` 无权调用",
+                        "E0301: `{}` is private to `{}` and cannot be called from `{}`",
                         n, info.origin, origin
                     ));
                 }
                 if info.params.len() != args.len() {
                     return Err(format!(
-                        "E0308: `{}` 期望 {} 参数，给 {}",
+                        "E0308: `{}` expects {} arguments, but {} were provided",
                         n,
                         info.params.len(),
                         args.len()
@@ -309,7 +598,10 @@ impl Checker {
                 for (arg, param) in args.iter().zip(&info.params) {
                     let t = self.check_expr(arg, env, origin)?;
                     if &t != param {
-                        return Err(format!("E0308: `{}` 参数 {:?}，期望 {:?}", n, t, param));
+                        return Err(format!(
+                            "E0308: argument to `{}` has type {:?}, but {:?} was expected",
+                            n, t, param
+                        ));
                     }
                 }
                 Ok(info.ret)

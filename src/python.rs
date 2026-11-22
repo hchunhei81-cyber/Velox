@@ -35,8 +35,10 @@ fn argtype(t: &Ty) -> &'static str {
     match t {
         Ty::I64 => "ctypes.c_int64",
         Ty::F64 => "ctypes.c_double",
+        Ty::Bool => "ctypes.c_bool",
         Ty::Str => "ctypes.c_char_p",
         Ty::Void => "None",
+        Ty::Struct(_) => "None",
     }
 }
 fn restype(t: &Ty) -> &'static str {

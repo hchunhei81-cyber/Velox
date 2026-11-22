@@ -2,8 +2,10 @@
 pub enum Ty {
     I64,
     F64,
+    Bool,
     Str,
     Void,
+    Struct(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -17,10 +19,15 @@ pub enum Vis {
 pub enum Expr {
     Int(i64),
     Float(f64),
+    Bool(bool),
     Str(String),
+    Not(Box<Expr>),
+    Neg(Box<Expr>),
     Var(String),
     Bin(Box<Expr>, BinOp, Box<Expr>),
     Call(String, Vec<Expr>),
+    StructInit(String, Vec<(String, Expr)>),
+    Field(Box<Expr>, String),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -35,6 +42,8 @@ pub enum BinOp {
     Gt,
     Le,
     Ge,
+    And,
+    Or,
 }
 
 #[derive(Debug, Clone)]
@@ -46,6 +55,7 @@ pub enum Stmt {
         init: Expr,
     },
     Assign(String, Expr),
+    FieldAssign(Expr, Expr),
     Return(Option<Expr>),
     If(Expr, Vec<Stmt>, Vec<Stmt>),
     While(Expr, Vec<Stmt>),
@@ -63,13 +73,22 @@ pub struct FnDef {
     pub name: String,
     pub vis: Vis,
     pub origin: String,
-    pub is_extern: bool, // FFI 函数标记
+    pub is_extern: bool, // Marks an FFI function
     pub params: Vec<(String, Ty)>,
     pub ret: Ty,
     pub body: Vec<Stmt>,
 }
 
 #[derive(Debug, Clone)]
+pub struct StructDef {
+    pub name: String,
+    pub vis: Vis,
+    pub origin: String,
+    pub fields: Vec<(String, Ty)>,
+}
+
+#[derive(Debug, Clone)]
 pub struct Program {
     pub fns: Vec<FnDef>,
+    pub structs: Vec<StructDef>,
 }

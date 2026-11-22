@@ -21,18 +21,21 @@ pub fn extract_functions(header: &Path) -> Result<Vec<FfiFn>, String> {
     } else if let Some(name) = header.to_str().filter(|n| is_system_header(n)) {
         cmd.args(["-x", "c", "-include", name, "/dev/null"]);
     } else {
-        return Err(format!("E0200: 找不到头文件 `{}`", header.display()));
+        return Err(format!(
+            "E0200: cannot find header file `{}`",
+            header.display()
+        ));
     }
 
     let out = cmd
         .output()
-        .map_err(|e| format!("E0202: clang 调用失败: {}", e))?;
+        .map_err(|e| format!("E0202: failed to invoke clang: {}", e))?;
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr);
-        return Err(format!("E0202: clang ast-dump 失败: {}", stderr.trim()));
+        return Err(format!("E0202: clang AST dump failed: {}", stderr.trim()));
     }
-    let json: serde_json::Value =
-        serde_json::from_slice(&out.stdout).map_err(|e| format!("E0202: JSON 解析失败: {}", e))?;
+    let json: serde_json::Value = serde_json::from_slice(&out.stdout)
+        .map_err(|e| format!("E0202: failed to parse clang JSON output: {}", e))?;
     let mut fns = Vec::new();
     walk(&json, &mut fns, header);
     Ok(fns)
@@ -41,7 +44,7 @@ pub fn extract_functions(header: &Path) -> Result<Vec<FfiFn>, String> {
 fn walk(node: &serde_json::Value, fns: &mut Vec<FfiFn>, header: &Path) {
     if node.get("kind").and_then(|v| v.as_str()) == Some("FunctionDecl") {
         if let Some(f) = parse_fn(node, header) {
-            // 去重
+            // Remove duplicate declarations
             if !fns.iter().any(|x| x.name == f.name) {
                 fns.push(f);
             }
@@ -55,8 +58,8 @@ fn walk(node: &serde_json::Value, fns: &mut Vec<FfiFn>, header: &Path) {
 }
 
 fn parse_fn(node: &serde_json::Value, header: &Path) -> Option<FfiFn> {
-    // 普通项目头文件只提取自身声明。
-    // 系统头文件的 Clang AST 节点可能省略 loc.file，不能据此过滤函数。
+    // For project headers, extract declarations originating from the header itself.
+    // Clang AST nodes from system headers may omit loc.file; do not use that field alone to filter functions.
     if !header.to_str().map(is_system_header).unwrap_or(false) {
         let file = node.pointer("/loc/file").and_then(|v| v.as_str())?;
         let hname = header.file_name()?.to_str()?;
@@ -65,7 +68,7 @@ fn parse_fn(node: &serde_json::Value, header: &Path) -> Option<FfiFn> {
         }
     }
 
-    // 排除隐式 / static inline 等
+    // Exclude implicit declarations, static inline functions, and unsupported declarations.
     let storage = node
         .get("storageClass")
         .and_then(|v| v.as_str())
@@ -76,7 +79,7 @@ fn parse_fn(node: &serde_json::Value, header: &Path) -> Option<FfiFn> {
 
     let name = node.get("name")?.as_str()?.to_string();
     let qual = node.pointer("/type/qualType")?.as_str()?;
-    // qual 形如 "int (int, double)" 或 "void (void)"
+    // qual has a form such as "int (int, double)" or "void (void)"
     let paren = qual.find('(')?;
     let ret_src = qual[..paren].trim();
     let params_src = qual[paren + 1..].trim_end_matches(')');
@@ -93,7 +96,7 @@ fn parse_fn(node: &serde_json::Value, header: &Path) -> Option<FfiFn> {
 }
 
 fn parse_c_ty(s: &str) -> Option<Ty> {
-    // 去 const/restrict/volatile
+    // Remove const, restrict, and volatile qualifiers.
     let s: String = s
         .split_whitespace()
         .filter(|w| !matches!(*w, "const" | "volatile" | "restrict" | "__restrict"))
@@ -102,9 +105,13 @@ fn parse_c_ty(s: &str) -> Option<Ty> {
     let s = s.trim();
     match s {
         "void" => Some(Ty::Void),
-        "int" | "long" | "long long" | "int64_t" | "size_t" | "ssize_t" | "unsigned int"
-        | "unsigned long" | "uint64_t" | "int32_t" => Some(Ty::I64),
-        "double" | "float" => Some(Ty::F64),
+        "_Bool" | "bool" => Some(Ty::Bool),
+        // Accept only types whose ABI compatibility can be guaranteed by the current Velox type system.
+        // C int, float, int32_t, unsigned int, and related types remain unsupported until i32/f32 support is implemented.
+        "long" | "long long" | "int64_t" | "size_t" | "ssize_t" | "unsigned long" | "uint64_t" => {
+            Some(Ty::I64)
+        }
+        "double" => Some(Ty::F64),
         "char *" | "char*" => Some(Ty::Str),
         _ => None,
     }

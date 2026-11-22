@@ -1,44 +1,96 @@
 use crate::ast::*;
-use crate::lexer::Tok;
+use crate::lexer::{Span, SpannedToken, Tok};
 
 pub struct Parser {
-    toks: Vec<Tok>,
+    toks: Vec<SpannedToken>,
     pos: usize,
+    last_span: Option<Span>,
+    error_span: Option<Span>,
 }
 
 impl Parser {
-    pub fn new(mut toks: Vec<Tok>) -> Self {
-        if toks.last() != Some(&Tok::Eof) {
-            toks.push(Tok::Eof);
+    pub fn new(toks: Vec<Tok>) -> Self {
+        let tokens = toks
+            .into_iter()
+            .map(|kind| SpannedToken {
+                kind,
+                span: Span::default(),
+            })
+            .collect();
+        Self::new_spanned(tokens)
+    }
+
+    pub fn new_spanned(mut toks: Vec<SpannedToken>) -> Self {
+        if !matches!(toks.last().map(|t| &t.kind), Some(Tok::Eof)) {
+            toks.push(SpannedToken {
+                kind: Tok::Eof,
+                span: Span::default(),
+            });
         }
-        Self { toks, pos: 0 }
+        Self {
+            toks,
+            pos: 0,
+            last_span: None,
+            error_span: None,
+        }
+    }
+
+    fn current_span(&self) -> Span {
+        self.toks
+            .get(self.pos)
+            .map(|t| t.span)
+            .or(self.last_span)
+            .unwrap_or_default()
+    }
+
+    pub fn program_with_span(mut self) -> Result<Program, (String, Span)> {
+        match self.program() {
+            Ok(program) => Ok(program),
+            Err(message) => {
+                let span = self
+                    .error_span
+                    .or(self.last_span)
+                    .unwrap_or_else(|| self.current_span());
+                Err((message, span))
+            }
+        }
     }
     fn peek(&self) -> &Tok {
-        self.toks.last().map_or(&Tok::Eof, |_| {
-            self.toks
-                .get(self.pos)
-                .unwrap_or_else(|| self.toks.last().unwrap())
-        })
+        self.toks
+            .get(self.pos)
+            .or_else(|| self.toks.last())
+            .map(|t| &t.kind)
+            .unwrap_or(&Tok::Eof)
     }
+
     fn bump(&mut self) -> Tok {
-        let t = self.peek().clone();
-        if t != Tok::Eof {
+        let token = self.toks.get(self.pos).cloned().unwrap_or(SpannedToken {
+            kind: Tok::Eof,
+            span: Span::default(),
+        });
+
+        if token.kind != Tok::Eof {
             self.pos += 1;
+            self.last_span = Some(token.span);
         }
-        t
+        token.kind
     }
     fn eat(&mut self, t: &Tok) -> Result<(), String> {
         if self.peek() == t {
             self.bump();
             Ok(())
         } else {
+            self.error_span = Some(self.current_span());
             Err(format!("expected {:?}, got {:?}", t, self.peek()))
         }
     }
     fn ident(&mut self) -> Result<String, String> {
         match self.bump() {
             Tok::Ident(s) => Ok(s),
-            t => Err(format!("expected ident, got {:?}", t)),
+            t => {
+                self.error_span = self.last_span;
+                Err(format!("expected ident, got {:?}", t))
+            }
         }
     }
     fn ty(&mut self) -> Result<Ty, String> {
@@ -46,20 +98,68 @@ impl Parser {
             Tok::Ident(s) => match s.as_str() {
                 "i64" => Ok(Ty::I64),
                 "f64" => Ok(Ty::F64),
+                "bool" => Ok(Ty::Bool),
                 "str" => Ok(Ty::Str),
                 "void" => Ok(Ty::Void),
-                _ => Err(format!("unknown type `{}`", s)),
+                _ => Ok(Ty::Struct(s)),
             },
-            t => Err(format!("expected type, got {:?}", t)),
+            t => {
+                self.error_span = self.last_span;
+                Err(format!("expected type, got {:?}", t))
+            }
         }
     }
 
     pub fn program(&mut self) -> Result<Program, String> {
         let mut fns = Vec::new();
+        let mut structs = Vec::new();
         while *self.peek() != Tok::Eof {
-            fns.push(self.fn_def()?);
+            let start_pos = self.pos;
+            let vis = match self.peek() {
+                Tok::Public => {
+                    self.bump();
+                    Vis::Public
+                }
+                Tok::Private => {
+                    self.bump();
+                    Vis::Private
+                }
+                Tok::Export => {
+                    self.bump();
+                    Vis::Export
+                }
+                _ => Vis::Private,
+            };
+            if *self.peek() == Tok::Struct {
+                self.bump();
+                let name = self.ident()?;
+                self.eat(&Tok::LBrace)?;
+                let mut fields = Vec::new();
+                while *self.peek() != Tok::RBrace {
+                    let field = self.ident()?;
+                    self.eat(&Tok::Colon)?;
+                    let ty = self.ty()?;
+                    fields.push((field, ty));
+                    if *self.peek() == Tok::Comma || *self.peek() == Tok::Semi {
+                        self.bump();
+                    } else if *self.peek() != Tok::RBrace {
+                        return Err("expected `,` or `}` in struct".into());
+                    }
+                }
+                self.eat(&Tok::RBrace)?;
+                structs.push(StructDef {
+                    name,
+                    vis,
+                    origin: String::new(),
+                    fields,
+                });
+            } else {
+                // fn_def consumes its own visibility modifier.
+                self.pos = start_pos;
+                fns.push(self.fn_def()?);
+            }
         }
-        Ok(Program { fns })
+        Ok(Program { fns, structs })
     }
 
     fn fn_def(&mut self) -> Result<FnDef, String> {
@@ -162,7 +262,7 @@ impl Parser {
             }
             Tok::If => {
                 self.bump();
-                let cond = self.expr()?;
+                let cond = self.condition_expr()?;
                 let then = self.block()?;
                 let els = if *self.peek() == Tok::Else {
                     self.bump();
@@ -178,7 +278,7 @@ impl Parser {
             }
             Tok::While => {
                 self.bump();
-                let cond = self.expr()?;
+                let cond = self.condition_expr()?;
                 let body = self.block()?;
                 Ok(Stmt::While(cond, body))
             }
@@ -204,10 +304,10 @@ impl Parser {
                     self.bump();
                     let rhs = self.expr()?;
                     self.eat(&Tok::Semi)?;
-                    if let Expr::Var(name) = e {
-                        Ok(Stmt::Assign(name, rhs))
-                    } else {
-                        Err("invalid assign target".into())
+                    match e {
+                        Expr::Var(name) => Ok(Stmt::Assign(name, rhs)),
+                        Expr::Field(_, _) => Ok(Stmt::FieldAssign(e, rhs)),
+                        _ => Err("invalid assign target".into()),
                     }
                 } else {
                     self.eat(&Tok::Semi)?;
@@ -217,8 +317,40 @@ impl Parser {
         }
     }
 
+    fn condition_expr(&mut self) -> Result<Expr, String> {
+        // A bare identifier immediately followed by the block opener is a condition variable,
+        // not a struct literal (e.g. `if ready { ... }`).
+        if let Tok::Ident(name) = self.peek().clone() {
+            if self.toks.get(self.pos + 1).map(|t| &t.kind) == Some(&Tok::LBrace) {
+                self.bump();
+                return Ok(Expr::Var(name));
+            }
+        }
+        self.expr()
+    }
+
     fn expr(&mut self) -> Result<Expr, String> {
-        self.cmp()
+        self.logical_or()
+    }
+
+    fn logical_or(&mut self) -> Result<Expr, String> {
+        let mut left = self.logical_and()?;
+        while *self.peek() == Tok::OrOr {
+            self.bump();
+            let right = self.logical_and()?;
+            left = Expr::Bin(Box::new(left), BinOp::Or, Box::new(right));
+        }
+        Ok(left)
+    }
+
+    fn logical_and(&mut self) -> Result<Expr, String> {
+        let mut left = self.cmp()?;
+        while *self.peek() == Tok::AndAnd {
+            self.bump();
+            let right = self.cmp()?;
+            left = Expr::Bin(Box::new(left), BinOp::And, Box::new(right));
+        }
+        Ok(left)
     }
 
     fn cmp(&mut self) -> Result<Expr, String> {
@@ -255,7 +387,7 @@ impl Parser {
     }
 
     fn mul(&mut self) -> Result<Expr, String> {
-        let mut l = self.atom()?;
+        let mut l = self.unary()?;
         loop {
             let op = match self.peek() {
                 Tok::Star => BinOp::Mul,
@@ -264,16 +396,36 @@ impl Parser {
                 _ => break,
             };
             self.bump();
-            let r = self.atom()?;
+            let r = self.unary()?;
             l = Expr::Bin(Box::new(l), op, Box::new(r));
         }
         Ok(l)
+    }
+
+    fn unary(&mut self) -> Result<Expr, String> {
+        if *self.peek() == Tok::Minus {
+            self.bump();
+            return Ok(Expr::Neg(Box::new(self.unary()?)));
+        }
+        if *self.peek() == Tok::Bang {
+            self.bump();
+            return Ok(Expr::Not(Box::new(self.unary()?)));
+        }
+        let mut e = self.atom()?;
+        while *self.peek() == Tok::Dot {
+            self.bump();
+            let field = self.ident()?;
+            e = Expr::Field(Box::new(e), field);
+        }
+        Ok(e)
     }
 
     fn atom(&mut self) -> Result<Expr, String> {
         match self.bump() {
             Tok::Int(n) => Ok(Expr::Int(n)),
             Tok::Float(f) => Ok(Expr::Float(f)),
+            Tok::True => Ok(Expr::Bool(true)),
+            Tok::False => Ok(Expr::Bool(false)),
             Tok::Str(s) => Ok(Expr::Str(s)),
             Tok::Ident(name) => {
                 if *self.peek() == Tok::LParen {
@@ -291,6 +443,24 @@ impl Parser {
                     }
                     self.eat(&Tok::RParen)?;
                     Ok(Expr::Call(name, args))
+                } else if *self.peek() == Tok::LBrace {
+                    self.bump();
+                    let mut fields = Vec::new();
+                    if *self.peek() != Tok::RBrace {
+                        loop {
+                            let field = self.ident()?;
+                            self.eat(&Tok::Colon)?;
+                            let value = self.expr()?;
+                            fields.push((field, value));
+                            if *self.peek() == Tok::Comma {
+                                self.bump();
+                            } else {
+                                break;
+                            }
+                        }
+                    }
+                    self.eat(&Tok::RBrace)?;
+                    Ok(Expr::StructInit(name, fields))
                 } else {
                     Ok(Expr::Var(name))
                 }
@@ -300,7 +470,10 @@ impl Parser {
                 self.eat(&Tok::RParen)?;
                 Ok(e)
             }
-            t => Err(format!("unexpected token {:?}", t)),
+            t => {
+                self.error_span = self.last_span;
+                Err(format!("unexpected token {:?}", t))
+            }
         }
     }
 }

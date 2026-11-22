@@ -6,6 +6,10 @@ Cargo.lock.bak
 *.backup
 *.bak*
 *.backup*
+*backup*/
+
+# vscode
+vscode/
 
 # Velox compiler artifacts
 # The C backend emits <out>.c next to the binary — never commit those.
