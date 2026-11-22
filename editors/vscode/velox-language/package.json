@@ -1,0 +1,63 @@
+{
+  "name": "velox-language",
+  "displayName": "Velox Language",
+  "description": "Velox syntax highlighting, snippets and editor experience",
+  "version": "0.2.0",
+  "publisher": "velox-lang",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "velox",
+        "aliases": [
+          "Velox",
+          "velox"
+        ],
+        "extensions": [
+          ".vx"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "velox",
+        "scopeName": "source.velox",
+        "path": "./syntaxes/velox.tmLanguage.json"
+      }
+    ],
+    "snippets": [
+      {
+        "language": "velox",
+        "path": "./snippets/velox.json"
+      }
+    ],
+    "configurationDefaults": {
+      "[velox]": {
+        "editor.insertSpaces": true,
+        "editor.tabSize": 4,
+        "editor.detectIndentation": false,
+        "editor.autoIndent": "full",
+        "editor.wordWrap": "off",
+        "editor.bracketPairColorization.enabled": true,
+        "editor.guides.bracketPairs": "active",
+        "editor.guides.indentation": true,
+        "editor.suggest.snippetsPreventQuickSuggestions": false,
+        "editor.suggest.showWords": true,
+        "editor.formatOnPaste": false
+      }
+    }
+  },
+  "main": "./extension.js",
+  "activationEvents": [
+    "onLanguage:velox"
+  ],
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  }
+}

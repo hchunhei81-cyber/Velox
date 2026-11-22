@@ -9,7 +9,7 @@ Cargo.lock.bak
 *backup*/
 
 # vscode
-vscode/
+/vscode/
 
 # Velox compiler artifacts
 # The C backend emits <out>.c next to the binary — never commit those.
@@ -52,3 +52,5 @@ example/
 *.dylib
 *.so
 _fast_math.py
+# VS Code extension dependencies
+/editors/vscode/velox-language/node_modules/

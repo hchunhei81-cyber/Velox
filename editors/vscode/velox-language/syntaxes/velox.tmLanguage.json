@@ -1,0 +1,239 @@
+{
+  "scopeName": "source.velox",
+  "patterns": [
+    {
+      "include": "#comments"
+    },
+    {
+      "include": "#strings"
+    },
+    {
+      "include": "#numbers"
+    },
+    {
+      "include": "#constants"
+    },
+    {
+      "include": "#attributes"
+    },
+    {
+      "include": "#struct-declarations"
+    },
+    {
+      "include": "#function-declarations"
+    },
+    {
+      "include": "#struct-literals"
+    },
+    {
+      "include": "#field-access"
+    },
+    {
+      "include": "#field-declarations"
+    },
+    {
+      "include": "#types"
+    },
+    {
+      "include": "#builtins"
+    },
+    {
+      "include": "#keywords"
+    },
+    {
+      "include": "#functions"
+    },
+    {
+      "include": "#operators"
+    },
+    {
+      "include": "#punctuation"
+    }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.double-slash.velox",
+          "match": "//.*$"
+        },
+        {
+          "name": "comment.block.velox",
+          "begin": "/\\*",
+          "end": "\\*/"
+        }
+      ]
+    },
+    "strings": {
+      "name": "string.quoted.double.velox",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        {
+          "name": "constant.character.escape.velox",
+          "match": "\\\\(?:[\\\\\"nrt0]|x[0-9A-Fa-f]{2}|u\\{[0-9A-Fa-f]+\\})"
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.float.velox",
+          "match": "\\b(?:[0-9]+\\.[0-9]*|\\.[0-9]+)(?:[eE][+-]?[0-9]+)?\\b"
+        },
+        {
+          "name": "constant.numeric.float.velox",
+          "match": "\\b[0-9]+[eE][+-]?[0-9]+\\b"
+        },
+        {
+          "name": "constant.numeric.integer.velox",
+          "match": "\\b[0-9]+\\b"
+        }
+      ]
+    },
+    "constants": {
+      "patterns": [
+        {
+          "name": "constant.language.boolean.velox",
+          "match": "\\b(true|false)\\b"
+        }
+      ]
+    },
+    "attributes": {
+      "patterns": [
+        {
+          "name": "entity.name.label.velox",
+          "match": "\\b(main)\\b(?=\\s*\\()"
+        }
+      ]
+    },
+    "struct-declarations": {
+      "patterns": [
+        {
+          "name": "meta.struct.declaration.velox",
+          "match": "\\b(struct)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": {
+              "name": "keyword.control.velox"
+            },
+            "2": {
+              "name": "entity.name.type.velox"
+            }
+          }
+        }
+      ]
+    },
+    "function-declarations": {
+      "patterns": [
+        {
+          "name": "meta.function.definition.velox",
+          "match": "\\b(fn)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": {
+              "name": "keyword.control.velox"
+            },
+            "2": {
+              "name": "entity.name.function.velox"
+            }
+          }
+        }
+      ]
+    },
+    "struct-literals": {
+      "patterns": [
+        {
+          "name": "entity.name.type.velox",
+          "match": "\\b[A-Z][A-Za-z0-9_]*(?=\\s*\\{)"
+        }
+      ]
+    },
+    "field-access": {
+      "patterns": [
+        {
+          "name": "variable.other.property.velox",
+          "match": "(?<=\\.)[A-Za-z_][A-Za-z0-9_]*"
+        }
+      ]
+    },
+    "field-declarations": {
+      "patterns": [
+        {
+          "name": "variable.other.property.velox",
+          "match": "\\b[A-Za-z_][A-Za-z0-9_]*(?=\\s*:)"
+        }
+      ]
+    },
+    "types": {
+      "patterns": [
+        {
+          "name": "storage.type.primitive.velox",
+          "match": "\\b(i64|f64|bool|str|void)\\b"
+        },
+        {
+          "name": "entity.name.type.velox",
+          "match": "\\b[A-Z][A-Za-z0-9_]*\\b"
+        }
+      ]
+    },
+    "builtins": {
+      "patterns": [
+        {
+          "name": "support.function.builtin.velox",
+          "match": "\\b(print|println)\\b(?=\\s*\\()"
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.velox",
+          "match": "\\b(fn|let|mut|if|else|while|for|in|return|parallel|struct|enum|using|extern)\\b"
+        },
+        {
+          "name": "storage.modifier.velox",
+          "match": "\\b(public|private|export)\\b"
+        }
+      ]
+    },
+    "functions": {
+      "patterns": [
+        {
+          "name": "entity.name.function.velox",
+          "match": "\\b[A-Za-z_][A-Za-z0-9_]*(?=\\s*\\()"
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.logical.velox",
+          "match": "&&|\\|\\||!"
+        },
+        {
+          "name": "keyword.operator.comparison.velox",
+          "match": "==|!=|<=|>=|<|>"
+        },
+        {
+          "name": "keyword.operator.arithmetic.velox",
+          "match": "\\+|-|\\*|/|%|="
+        },
+        {
+          "name": "keyword.operator.other.velox",
+          "match": "->|\\.\\."
+        }
+      ]
+    },
+    "punctuation": {
+      "patterns": [
+        {
+          "name": "punctuation.separator.velox",
+          "match": "[,:;.]"
+        },
+        {
+          "name": "punctuation.section.braces.velox",
+          "match": "[{}\\[\\]()]"
+        }
+      ]
+    }
+  }
+}
