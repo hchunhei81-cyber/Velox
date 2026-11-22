@@ -223,6 +223,26 @@ veloxc --help                  查看用法
 
 ---
 
+## Analysis API 与源码诊断
+
+库提供 `analyze_source(source, origin)`，供编辑器和开发工具集成使用。
+该接口运行词法分析、语法分析和类型检查，不生成 C 代码，也不调用 Clang。
+
+`AnalysisDiagnostic` 提供以下字段：
+
+- `code`：可选的编译器错误码。
+- `message`：可读的诊断信息。
+- `severity`：`Error` 或 `Warning`。
+- `start` / `end`：原始源码中的 UTF-8 字节偏移。
+- `line` / `column`：可用时提供从 1 开始的行号和列号。
+
+列号按 Unicode 码点（Rust `char`）计数，不是 UTF-8 字节数，也不是
+UTF-16 code units。语言服务器接入编辑器时，应转换为编辑器协商的
+位置编码（通常为 UTF-16）。
+
+Parser 会保留表达式源码位置，类型检查器据此尽可能将错误定位到最内层
+出错表达式或操作数，而不是仅报告整条语句的位置。
+
 ## 目录结构
 
 ```

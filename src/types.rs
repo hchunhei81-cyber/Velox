@@ -1,4 +1,6 @@
 use crate::ast::*;
+use crate::lexer::Span;
+use std::cell::Cell;
 use std::collections::HashMap;
 
 #[derive(Clone)]
@@ -79,10 +81,25 @@ fn validate_struct_cycles(structs: &[StructDef]) -> Result<(), String> {
 pub struct Checker {
     fns: HashMap<String, FnInfo>,
     structs: HashMap<String, StructInfo>,
+    error_span: Cell<Option<Span>>,
+}
+
+fn strip_located(mut expr: &Expr) -> &Expr {
+    while let Expr::Located(inner, _) = expr {
+        expr = inner;
+    }
+    expr
+}
+
+fn expr_span(expr: &Expr) -> Option<Span> {
+    match expr {
+        Expr::Located(_, span) => Some(*span),
+        _ => None,
+    }
 }
 
 fn field_root_var(expr: &Expr) -> Option<&str> {
-    match expr {
+    match strip_located(expr) {
         Expr::Var(name) => Some(name),
         Expr::Field(base, _) => field_root_var(base),
         _ => None,
@@ -113,6 +130,17 @@ impl Checker {
         Self {
             fns,
             structs: HashMap::new(),
+            error_span: Cell::new(None),
+        }
+    }
+
+    pub fn last_error_span(&self) -> Option<Span> {
+        self.error_span.get()
+    }
+
+    fn mark_error_span(&self, span: Option<Span>) {
+        if self.error_span.get().is_none() {
+            self.error_span.set(span);
         }
     }
 
@@ -133,6 +161,7 @@ impl Checker {
     }
 
     pub fn check(&mut self, p: &Program) -> Result<(), String> {
+        self.error_span.set(None);
         for st in &p.structs {
             if self.structs.contains_key(&st.name) {
                 return Err(format!("E0105: duplicate struct `{}`", st.name));
@@ -293,6 +322,7 @@ impl Checker {
                     ));
                 }
                 if t != it {
+                    self.mark_error_span(expr_span(init));
                     return Err(format!(
                         "E0308: `{}` is declared as {:?}, but its initializer has type {:?}",
                         name, t, it
@@ -320,6 +350,7 @@ impl Checker {
                 }
                 let t = self.check_expr(e, env, origin)?;
                 if v.ty != t {
+                    self.mark_error_span(expr_span(e));
                     return Err(format!(
                         "E0308: `{}` must have type {:?}, but the expression has type {:?}",
                         n, v.ty, t
@@ -343,7 +374,7 @@ impl Checker {
                     ));
                 }
 
-                if !matches!(target, Expr::Field(_, _)) {
+                if !matches!(strip_located(target), Expr::Field(_, _)) {
                     return Err("E0500: invalid field assignment target".into());
                 }
 
@@ -351,6 +382,7 @@ impl Checker {
                 let actual = self.check_expr(value, env, origin)?;
 
                 if expected != actual {
+                    self.mark_error_span(expr_span(value));
                     return Err(format!(
                         "E0308: field assignment type mismatch: expected {:?}, found {:?}",
                         expected, actual
@@ -366,6 +398,7 @@ impl Checker {
                     Some(expr) => {
                         let t = self.check_expr(expr, env, origin)?;
                         if &t != ret {
+                            self.mark_error_span(expr_span(expr));
                             return Err(format!(
                                 "E0309: return type is {:?}, but {:?} was expected",
                                 t, ret
@@ -381,6 +414,7 @@ impl Checker {
             }
             Stmt::If(c, then_body, else_body) => {
                 if self.check_expr(c, env, origin)? != Ty::Bool {
+                    self.mark_error_span(expr_span(c));
                     return Err("E0401: `if` condition must have type `bool`".into());
                 }
                 let mut a = env.clone();
@@ -391,6 +425,7 @@ impl Checker {
             }
             Stmt::While(c, body) => {
                 if self.check_expr(c, env, origin)? != Ty::Bool {
+                    self.mark_error_span(expr_span(c));
                     return Err("E0401: `while` condition must have type `bool`".into());
                 }
                 let mut inner = env.clone();
@@ -441,7 +476,21 @@ impl Checker {
         env: &HashMap<String, VarInfo>,
         origin: &str,
     ) -> Result<Ty, String> {
+        let result = self.check_expr_inner(e, env, origin);
+        if result.is_err() {
+            self.mark_error_span(expr_span(e));
+        }
+        result
+    }
+
+    fn check_expr_inner(
+        &self,
+        e: &Expr,
+        env: &HashMap<String, VarInfo>,
+        origin: &str,
+    ) -> Result<Ty, String> {
         match e {
+            Expr::Located(inner, _) => self.check_expr(inner, env, origin),
             Expr::Int(_) => Ok(Ty::I64),
             Expr::Float(_) => Ok(Ty::F64),
             Expr::Bool(_) => Ok(Ty::Bool),
@@ -461,6 +510,7 @@ impl Checker {
                     })?;
                     let actual = self.check_expr(expr, env, origin)?;
                     if &actual != expected {
+                        self.mark_error_span(expr_span(expr));
                         return Err(format!(
                             "E0308: type mismatch for field `{}.{}`",
                             name, field
@@ -507,6 +557,38 @@ impl Checker {
                 let a = self.check_expr(l, env, origin)?;
                 let b = self.check_expr(r, env, origin)?;
 
+                let invalid_left = match op {
+                    BinOp::And | BinOp::Or => a != Ty::Bool,
+                    BinOp::Eq => false,
+                    BinOp::Lt
+                    | BinOp::Gt
+                    | BinOp::Le
+                    | BinOp::Ge
+                    | BinOp::Add
+                    | BinOp::Sub
+                    | BinOp::Mul
+                    | BinOp::Div
+                    | BinOp::Mod => !matches!(a, Ty::I64 | Ty::F64),
+                };
+                let invalid_right = match op {
+                    BinOp::And | BinOp::Or => b != Ty::Bool,
+                    BinOp::Eq => a != b,
+                    BinOp::Lt
+                    | BinOp::Gt
+                    | BinOp::Le
+                    | BinOp::Ge
+                    | BinOp::Add
+                    | BinOp::Sub
+                    | BinOp::Mul
+                    | BinOp::Div
+                    | BinOp::Mod => !matches!(b, Ty::I64 | Ty::F64) || a != b,
+                };
+                if invalid_right {
+                    self.mark_error_span(expr_span(r));
+                } else if invalid_left {
+                    self.mark_error_span(expr_span(l));
+                }
+
                 match op {
                     BinOp::And | BinOp::Or => {
                         if a == Ty::Bool && b == Ty::Bool {
@@ -547,6 +629,7 @@ impl Checker {
                 if matches!(t, Ty::I64 | Ty::F64) {
                     Ok(t)
                 } else {
+                    self.mark_error_span(expr_span(inner));
                     Err("E0308: unary `-` requires a numeric operand".into())
                 }
             }
@@ -555,6 +638,7 @@ impl Checker {
                 if t == Ty::Bool {
                     Ok(Ty::Bool)
                 } else {
+                    self.mark_error_span(expr_span(inner));
                     Err("E0308: the `!` operator requires a `bool` operand".into())
                 }
             }
@@ -565,6 +649,7 @@ impl Checker {
                     }
                     let t = self.check_expr(&args[0], env, origin)?;
                     if !matches!(t, Ty::I64 | Ty::F64 | Ty::Bool | Ty::Str) {
+                        self.mark_error_span(expr_span(&args[0]));
                         return Err(format!(
                             "E0308: `{}` does not support values of type {:?}",
                             n, t
@@ -598,6 +683,7 @@ impl Checker {
                 for (arg, param) in args.iter().zip(&info.params) {
                     let t = self.check_expr(arg, env, origin)?;
                     if &t != param {
+                        self.mark_error_span(expr_span(arg));
                         return Err(format!(
                             "E0308: argument to `{}` has type {:?}, but {:?} was expected",
                             n, t, param
