@@ -2,6 +2,10 @@
 /target/
 **/*.rs.bk
 Cargo.lock.bak
+*.bak
+*.backup
+*.bak*
+*.backup*
 
 # Velox compiler artifacts
 # The C backend emits <out>.c next to the binary — never commit those.
@@ -16,6 +20,9 @@ Cargo.lock.bak
 /a.out
 # Catch any bare executable the user built at repo root:
 /*.out
+
+# Velox codes
+example/
 
 # Editor / OS noise
 .DS_Store
@@ -32,3 +39,12 @@ Cargo.lock.bak
 # Local scratch
 /tmp/
 *.log
+
+# Added by cargo
+
+/target
+
+# veloxc --py 生成物
+*.dylib
+*.so
+_fast_math.py

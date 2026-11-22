@@ -305,4 +305,4 @@ C 式文本内联让跨文件诊断变得不可能——你没法知道某个函
 
 ## License
 
-MIT OR Apache-2.0
+BSD3 3-Clause
