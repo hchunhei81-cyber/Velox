@@ -448,6 +448,34 @@ impl Checker {
                 self.check_expr(e, env, origin)?;
                 Ok(false)
             }
+            Stmt::For {
+                var,
+                start,
+                end,
+                body,
+            } => {
+                if env.contains_key(var) {
+                    return Err(format!(
+                        "E0104: loop variable `{}` is declared more than once in this scope",
+                        var
+                    ));
+                }
+                if self.check_expr(start, env, origin)? != Ty::I64
+                    || self.check_expr(end, env, origin)? != Ty::I64
+                {
+                    return Err("E0401: `for` bounds must have type `i64`".into());
+                }
+                let mut inner = env.clone();
+                inner.insert(
+                    var.clone(),
+                    VarInfo {
+                        ty: Ty::I64,
+                        mutable: false,
+                    },
+                );
+                self.check_block(body, &mut inner, ret, origin, parallel)?;
+                Ok(false)
+            }
             Stmt::ParallelFor {
                 var,
                 start,

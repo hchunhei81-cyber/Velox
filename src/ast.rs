@@ -66,6 +66,12 @@ pub enum Stmt {
     If(Expr, Vec<Stmt>, Vec<Stmt>),
     While(Expr, Vec<Stmt>),
     Expr(Expr),
+    For {
+        var: String,
+        start: Expr,
+        end: Expr,
+        body: Vec<Stmt>,
+    },
     ParallelFor {
         var: String,
         start: Expr,

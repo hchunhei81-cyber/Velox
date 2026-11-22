@@ -309,6 +309,21 @@ impl Parser {
                 let body = self.block()?;
                 Ok(Stmt::While(cond, body))
             }
+            Tok::For => {
+                self.bump();
+                let var = self.ident()?;
+                self.eat(&Tok::In)?;
+                let start = self.expr()?;
+                self.eat(&Tok::DotDot)?;
+                let end = self.range_end_expr()?;
+                let body = self.block()?;
+                Ok(Stmt::For {
+                    var,
+                    start,
+                    end,
+                    body,
+                })
+            }
             Tok::Parallel => {
                 self.bump();
                 self.eat(&Tok::For)?;
@@ -316,7 +331,7 @@ impl Parser {
                 self.eat(&Tok::In)?;
                 let start = self.expr()?;
                 self.eat(&Tok::DotDot)?;
-                let end = self.expr()?;
+                let end = self.range_end_expr()?;
                 let body = self.block()?;
                 Ok(Stmt::ParallelFor {
                     var,
@@ -342,6 +357,13 @@ impl Parser {
                 }
             }
         }
+    }
+
+    fn range_end_expr(&mut self) -> Result<Expr, String> {
+        self.condition_depth += 1;
+        let result = self.expr();
+        self.condition_depth -= 1;
+        result
     }
 
     fn condition_expr(&mut self) -> Result<Expr, String> {

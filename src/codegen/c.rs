@@ -303,6 +303,12 @@ static double velox_py_call_f64(const char *module_name,
                 let ex = self.expr(e);
                 self.out.push_str(&format!("{}{};\n", pad, ex));
             }
+            Stmt::For {
+                var,
+                start,
+                end,
+                body,
+            } => self.emit_for(var, start, end, body, ind),
             Stmt::ParallelFor {
                 var,
                 start,
@@ -312,6 +318,30 @@ static double velox_py_call_f64(const char *module_name,
                 self.emit_parallel_for(var, start, end, body, ind);
             }
         }
+    }
+
+    fn emit_for(&mut self, var: &str, start: &Expr, end: &Expr, body: &[Stmt], ind: usize) {
+        let pad = "  ".repeat(ind);
+        let s = self.expr(start);
+        let e = self.expr(end);
+        let saved = self.var_ty.clone();
+
+        self.var_ty.insert(var.to_string(), Ty::I64);
+
+        self.out.push_str(&format!(
+            "{}for (int64_t {v} = {s}; {v} < {e}; {v}++) {{\n",
+            pad,
+            v = var,
+            s = s,
+            e = e
+        ));
+
+        for stmt in body {
+            self.emit_stmt(stmt, ind + 1);
+        }
+
+        self.out.push_str(&format!("{}}}\n", pad));
+        self.var_ty = saved;
     }
 
     fn emit_parallel_for(
@@ -665,6 +695,20 @@ fn analyze_parallel_block(
 
             Stmt::Return(_) => {
                 return Err("E0604: return is not allowed inside parallel for".to_string());
+            }
+
+            Stmt::For {
+                var,
+                start,
+                end,
+                body,
+            } => {
+                count_parallel_reads(start, outer, locals, access);
+                count_parallel_reads(end, outer, locals, access);
+
+                let mut nested_locals = locals.clone();
+                nested_locals.insert(var.clone());
+                analyze_parallel_block(body, outer, &mut nested_locals, access)?;
             }
 
             Stmt::ParallelFor { .. } => {
