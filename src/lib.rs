@@ -20,8 +20,8 @@ pub enum DiagnosticSeverity {
 
 /// A compiler diagnostic suitable for IDE and command-line consumers.
 ///
-/// `line` and `column` are 1-based when available.
-/// They remain `None` until lexer/parser spans are implemented.
+/// `line` and `column` are 1-based when source positions are available.
+/// Columns count Unicode scalar values; `start` and `end` are UTF-8 byte offsets.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AnalysisDiagnostic {
     pub code: Option<String>,
@@ -64,6 +64,24 @@ impl AnalysisDiagnostic {
         diagnostic.end = Some(span.end);
         diagnostic
     }
+
+    fn at_source_span(message: impl Into<String>, span: Span, source: &str) -> Self {
+        let mut diagnostic = Self::at_span(message, span);
+        let mut offset = span.start.min(source.len());
+
+        while !source.is_char_boundary(offset) {
+            offset -= 1;
+        }
+
+        let prefix = &source[..offset];
+
+        diagnostic.line = Some(prefix.bytes().filter(|byte| *byte == b'\n').count() as u32 + 1);
+
+        let column = prefix.rsplit('\n').next().unwrap_or("");
+        diagnostic.column = Some(column.chars().count() as u32 + 1);
+
+        diagnostic
+    }
 }
 
 /// Analyze one Velox source file without generating C or invoking Clang.
@@ -91,11 +109,11 @@ pub fn analyze_source(source: &str, origin: &str) -> Result<(), AnalysisDiagnost
 
     let tokens = lexer::Lexer::new(&masked)
         .tokenize_spanned()
-        .map_err(|error| AnalysisDiagnostic::at_span(error.message, error.span))?;
+        .map_err(|error| AnalysisDiagnostic::at_source_span(error.message, error.span, source))?;
 
     let mut program = parser::Parser::new_spanned(tokens)
         .program_with_span()
-        .map_err(|(message, span)| AnalysisDiagnostic::at_span(message, span))?;
+        .map_err(|(message, span)| AnalysisDiagnostic::at_source_span(message, span, source))?;
 
     for function in &mut program.fns {
         function.origin = origin.to_string();
@@ -107,9 +125,12 @@ pub fn analyze_source(source: &str, origin: &str) -> Result<(), AnalysisDiagnost
     }
 
     let mut checker = types::Checker::new();
-    checker
-        .check(&program)
-        .map_err(AnalysisDiagnostic::from_message)?;
+    if let Err(message) = checker.check(&program) {
+        return Err(match checker.last_error_span() {
+            Some(span) => AnalysisDiagnostic::at_source_span(message, span, source),
+            None => AnalysisDiagnostic::from_message(message),
+        });
+    }
 
     Ok(())
 }

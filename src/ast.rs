@@ -28,6 +28,7 @@ pub enum Expr {
     Call(String, Vec<Expr>),
     StructInit(String, Vec<(String, Expr)>),
     Field(Box<Expr>, String),
+    Located(Box<Expr>, crate::lexer::Span),
 }
 
 #[derive(Debug, Clone, Copy)]

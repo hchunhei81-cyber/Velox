@@ -304,8 +304,8 @@ impl Parser {
                     self.bump();
                     let rhs = self.expr()?;
                     self.eat(&Tok::Semi)?;
-                    match e {
-                        Expr::Var(name) => Ok(Stmt::Assign(name, rhs)),
+                    match strip_located(&e) {
+                        Expr::Var(name) => Ok(Stmt::Assign(name.clone(), rhs)),
                         Expr::Field(_, _) => Ok(Stmt::FieldAssign(e, rhs)),
                         _ => Err("invalid assign target".into()),
                     }
@@ -323,7 +323,8 @@ impl Parser {
         if let Tok::Ident(name) = self.peek().clone() {
             if self.toks.get(self.pos + 1).map(|t| &t.kind) == Some(&Tok::LBrace) {
                 self.bump();
-                return Ok(Expr::Var(name));
+                let span = self.last_span.unwrap_or_default();
+                return Ok(located(Expr::Var(name), span));
             }
         }
         self.expr()
@@ -338,7 +339,7 @@ impl Parser {
         while *self.peek() == Tok::OrOr {
             self.bump();
             let right = self.logical_and()?;
-            left = Expr::Bin(Box::new(left), BinOp::Or, Box::new(right));
+            left = combine_expr(left, BinOp::Or, right);
         }
         Ok(left)
     }
@@ -348,7 +349,7 @@ impl Parser {
         while *self.peek() == Tok::AndAnd {
             self.bump();
             let right = self.cmp()?;
-            left = Expr::Bin(Box::new(left), BinOp::And, Box::new(right));
+            left = combine_expr(left, BinOp::And, right);
         }
         Ok(left)
     }
@@ -366,7 +367,7 @@ impl Parser {
             };
             self.bump();
             let r = self.add()?;
-            l = Expr::Bin(Box::new(l), op, Box::new(r));
+            l = combine_expr(l, op, r);
         }
         Ok(l)
     }
@@ -381,7 +382,7 @@ impl Parser {
             };
             self.bump();
             let r = self.mul()?;
-            l = Expr::Bin(Box::new(l), op, Box::new(r));
+            l = combine_expr(l, op, r);
         }
         Ok(l)
     }
@@ -397,7 +398,7 @@ impl Parser {
             };
             self.bump();
             let r = self.unary()?;
-            l = Expr::Bin(Box::new(l), op, Box::new(r));
+            l = combine_expr(l, op, r);
         }
         Ok(l)
     }
@@ -405,28 +406,42 @@ impl Parser {
     fn unary(&mut self) -> Result<Expr, String> {
         if *self.peek() == Tok::Minus {
             self.bump();
-            return Ok(Expr::Neg(Box::new(self.unary()?)));
+            let start = self.last_span.unwrap_or_default().start;
+            let inner = self.unary()?;
+            let end = expr_span(&inner).map(|s| s.end).unwrap_or(start);
+            return Ok(located(Expr::Neg(Box::new(inner)), Span { start, end }));
         }
         if *self.peek() == Tok::Bang {
             self.bump();
-            return Ok(Expr::Not(Box::new(self.unary()?)));
+            let start = self.last_span.unwrap_or_default().start;
+            let inner = self.unary()?;
+            let end = expr_span(&inner).map(|s| s.end).unwrap_or(start);
+            return Ok(located(Expr::Not(Box::new(inner)), Span { start, end }));
         }
         let mut e = self.atom()?;
         while *self.peek() == Tok::Dot {
             self.bump();
             let field = self.ident()?;
-            e = Expr::Field(Box::new(e), field);
+            let start = expr_span(&e).map(|s| s.start);
+            let end = self.last_span.map(|s| s.end);
+            let field_expr = Expr::Field(Box::new(e), field);
+            e = match (start, end) {
+                (Some(start), Some(end)) => located(field_expr, Span { start, end }),
+                _ => field_expr,
+            };
         }
         Ok(e)
     }
 
     fn atom(&mut self) -> Result<Expr, String> {
-        match self.bump() {
-            Tok::Int(n) => Ok(Expr::Int(n)),
-            Tok::Float(f) => Ok(Expr::Float(f)),
-            Tok::True => Ok(Expr::Bool(true)),
-            Tok::False => Ok(Expr::Bool(false)),
-            Tok::Str(s) => Ok(Expr::Str(s)),
+        let token = self.bump();
+        let token_span = self.last_span.unwrap_or_default();
+        match token {
+            Tok::Int(n) => Ok(located(Expr::Int(n), token_span)),
+            Tok::Float(f) => Ok(located(Expr::Float(f), token_span)),
+            Tok::True => Ok(located(Expr::Bool(true), token_span)),
+            Tok::False => Ok(located(Expr::Bool(false), token_span)),
+            Tok::Str(s) => Ok(located(Expr::Str(s), token_span)),
             Tok::Ident(name) => {
                 if *self.peek() == Tok::LParen {
                     self.bump();
@@ -442,7 +457,15 @@ impl Parser {
                         }
                     }
                     self.eat(&Tok::RParen)?;
-                    Ok(Expr::Call(name, args))
+                    let end = self.last_span.unwrap_or(token_span).end;
+                    let call = Expr::Call(name, args);
+                    Ok(located(
+                        located(call, token_span),
+                        Span {
+                            start: token_span.start,
+                            end,
+                        },
+                    ))
                 } else if *self.peek() == Tok::LBrace {
                     self.bump();
                     let mut fields = Vec::new();
@@ -460,9 +483,17 @@ impl Parser {
                         }
                     }
                     self.eat(&Tok::RBrace)?;
-                    Ok(Expr::StructInit(name, fields))
+                    let end = self.last_span.unwrap_or(token_span).end;
+                    let init = Expr::StructInit(name, fields);
+                    Ok(located(
+                        located(init, token_span),
+                        Span {
+                            start: token_span.start,
+                            end,
+                        },
+                    ))
                 } else {
-                    Ok(Expr::Var(name))
+                    Ok(located(Expr::Var(name), token_span))
                 }
             }
             Tok::LParen => {
@@ -476,4 +507,33 @@ impl Parser {
             }
         }
     }
+}
+
+fn expr_span(expr: &Expr) -> Option<Span> {
+    match expr {
+        Expr::Located(_, span) => Some(*span),
+        _ => None,
+    }
+}
+
+fn located(expr: Expr, span: Span) -> Expr {
+    Expr::Located(Box::new(expr), span)
+}
+
+fn combine_expr(left: Expr, op: BinOp, right: Expr) -> Expr {
+    let start = expr_span(&left).map(|s| s.start);
+    let end = expr_span(&right).map(|s| s.end);
+    let expr = Expr::Bin(Box::new(left), op, Box::new(right));
+
+    match (start, end) {
+        (Some(start), Some(end)) => located(expr, Span { start, end }),
+        _ => expr,
+    }
+}
+
+fn strip_located(mut expr: &Expr) -> &Expr {
+    while let Expr::Located(inner, _) = expr {
+        expr = inner;
+    }
+    expr
 }
