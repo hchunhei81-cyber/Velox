@@ -541,7 +541,159 @@ fn completion(source: &str, offset: usize) -> Value {
         }
     }
 
+    for keyword in [
+        "fn", "struct", "let", "mut", "return", "if", "else", "while", "for", "in", "true",
+        "false", "parallel", "public", "private", "export", "import", "python",
+    ] {
+        if !items.iter().any(|item| item["label"] == keyword) {
+            items.push(json!({
+                "label": keyword,
+                "kind": 14,
+                "detail": "Velox keyword"
+            }));
+        }
+    }
+
     json!({"isIncomplete": false, "items": items})
+}
+
+fn semantic_tokens(source: &str) -> Value {
+    let tokens = match Lexer::new(source).tokenize_spanned() {
+        Ok(tokens) => tokens,
+        Err(_) => return json!({"data": []}),
+    };
+
+    let symbols = collect_symbols(source, &tokens);
+    // namespace, type, function, variable, parameter, property,
+    // number, string, operator, keyword, boolean
+    let mut data: Vec<u32> = Vec::new();
+    let mut previous_line = 0usize;
+    let mut previous_start = 0usize;
+
+    for (index, token) in tokens.iter().enumerate() {
+        if token.span.start >= token.span.end {
+            continue;
+        }
+
+        let text = &source[token.span.start..token.span.end];
+        let previous = index.checked_sub(1).and_then(|i| tokens.get(i));
+        let previous2 = index.checked_sub(2).and_then(|i| tokens.get(i));
+        let next = tokens.get(index + 1);
+
+        let token_type = match &token.kind {
+            Tok::Fn
+            | Tok::Struct
+            | Tok::Let
+            | Tok::Mut
+            | Tok::Return
+            | Tok::If
+            | Tok::Else
+            | Tok::While
+            | Tok::For
+            | Tok::In
+            | Tok::Parallel
+            | Tok::Public
+            | Tok::Private
+            | Tok::Export => Some(9),
+
+            Tok::True | Tok::False => Some(10),
+            Tok::Int(_) | Tok::Float(_) => Some(6),
+            Tok::Str(_) => Some(7),
+
+            Tok::Plus
+            | Tok::Minus
+            | Tok::Star
+            | Tok::Slash
+            | Tok::Percent
+            | Tok::Eq
+            | Tok::EqEq
+            | Tok::Lt
+            | Tok::Gt
+            | Tok::Le
+            | Tok::Ge
+            | Tok::AndAnd
+            | Tok::OrOr
+            | Tok::Bang
+            | Tok::Arrow
+            | Tok::DotDot => Some(8),
+
+            Tok::Ident(name) => {
+                if name == "import" {
+                    Some(9)
+                } else if name == "python"
+                    && previous.is_some_and(|p| matches!(&p.kind, Tok::Ident(s) if s == "import"))
+                {
+                    Some(9)
+                } else if previous
+                    .is_some_and(|p| matches!(&p.kind, Tok::Ident(s) if s == "python"))
+                    && previous2.is_some_and(|p| matches!(&p.kind, Tok::Ident(s) if s == "import"))
+                {
+                    Some(0)
+                } else if name == "py" {
+                    Some(0)
+                } else if matches!(name.as_str(), "i64" | "f64" | "bool" | "str" | "void")
+                    || name.chars().next().is_some_and(char::is_uppercase)
+                {
+                    Some(1)
+                } else if previous.is_some_and(|p| matches!(&p.kind, Tok::Dot)) {
+                    Some(5)
+                } else if let Some(symbol) = symbols.iter().find(|s| s.span == token.span) {
+                    match symbol.kind {
+                        22 => Some(1),
+                        12 => Some(2),
+                        6 => Some(4),
+                        8 => Some(5),
+                        13 => Some(3),
+                        _ => Some(3),
+                    }
+                } else if next.is_some_and(|n| matches!(&n.kind, Tok::LParen)) {
+                    Some(2)
+                } else {
+                    Some(3)
+                }
+            }
+
+            Tok::LParen
+            | Tok::RParen
+            | Tok::LBrace
+            | Tok::RBrace
+            | Tok::Comma
+            | Tok::Semi
+            | Tok::Colon
+            | Tok::Dot
+            | Tok::Eof => None,
+        };
+
+        let Some(token_type) = token_type else {
+            continue;
+        };
+
+        let (line, start) = byte_offset_to_lsp(source, token.span.start);
+        let length = text.encode_utf16().count();
+        if length == 0 {
+            continue;
+        }
+
+        let delta_line = line - previous_line;
+        let delta_start = if delta_line == 0 {
+            start - previous_start
+        } else {
+            start
+        };
+
+        data.extend_from_slice(&[
+            delta_line as u32,
+            delta_start as u32,
+            length as u32,
+            token_type,
+            0,
+        ]);
+
+        previous_line = line;
+        previous_start = start;
+    }
+
+    json!({"data": data})
 }
 
 fn hover(source: &str, offset: usize) -> Value {
@@ -638,7 +790,19 @@ fn handle<W: Write>(
                                     "triggerCharacters": ["."]
                                 },
                                 "hoverProvider": true,
-                                "definitionProvider": true
+                                "definitionProvider": true,
+                                "semanticTokensProvider": {
+                                    "legend": {
+                                        "tokenTypes": [
+                                            "namespace", "type", "function",
+                                            "variable", "parameter", "property",
+                                            "number", "string", "operator",
+                                            "keyword", "boolean"
+                                        ],
+                                        "tokenModifiers": []
+                                    },
+                                    "full": true
+                                }
                             },
                             "serverInfo": {
                                 "name": "Velox Language Server",
@@ -722,6 +886,16 @@ fn handle<W: Write>(
                     .get(uri)
                     .map(|doc| completion(&doc.text, document_position(&msg, &doc.text)))
                     .unwrap_or_else(|| json!({"isIncomplete": false, "items": []}));
+                send(w, json!({"jsonrpc": "2.0", "id": id, "result": result}))?;
+            }
+        }
+        "textDocument/semanticTokens/full" => {
+            if let Some(id) = id {
+                let uri = msg["params"]["textDocument"]["uri"].as_str().unwrap_or("");
+                let result = documents
+                    .get(uri)
+                    .map(|doc| semantic_tokens(&doc.text))
+                    .unwrap_or_else(|| json!({"data": []}));
                 send(w, json!({"jsonrpc": "2.0", "id": id, "result": result}))?;
             }
         }
@@ -886,6 +1060,62 @@ fn main() -> void {
     }
 
     #[test]
+    fn completion_includes_velox_keywords() {
+        let source = "fn main() -> void {}";
+        let result = completion(source, source.len());
+        let labels: Vec<String> = result["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|item| item["label"].as_str().map(str::to_string))
+            .collect();
+
+        for keyword in [
+            "fn", "struct", "let", "mut", "return", "if", "else", "while", "for", "in", "parallel",
+            "public", "private", "export", "import", "python",
+        ] {
+            assert!(
+                labels.iter().any(|label| label == keyword),
+                "missing keyword completion: {keyword}"
+            );
+        }
+    }
+
+    #[test]
+    fn semantic_tokens_classify_velox_constructs() {
+        let source = "fn main() -> void { let value: i64 = 42; println(true); }";
+        let result = semantic_tokens(source);
+        let data = result["data"].as_array().unwrap();
+        assert_eq!(data.len() % 5, 0);
+
+        let types: Vec<u64> = data
+            .chunks(5)
+            .map(|chunk| chunk[3].as_u64().unwrap())
+            .collect();
+
+        for expected in [1, 2, 3, 6, 9, 10] {
+            assert!(
+                types.contains(&expected),
+                "missing semantic token type {expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn semantic_tokens_support_python_imports() {
+        let source = "import python math; fn main() -> void { let x: f64 = py.math.sqrt(9.0); }";
+        let result = semantic_tokens(source);
+        let data = result["data"].as_array().unwrap();
+
+        let types: Vec<u64> = data
+            .chunks(5)
+            .map(|chunk| chunk[3].as_u64().unwrap())
+            .collect();
+
+        assert!(types.contains(&0), "module namespace token missing");
+    }
+
+    #[test]
     fn initialize_advertises_language_features() {
         let mut output = Vec::new();
         let mut docs = HashMap::new();
@@ -900,5 +1130,6 @@ fn main() -> void {
         assert!(response.contains("completionProvider"));
         assert!(response.contains("hoverProvider"));
         assert!(response.contains("definitionProvider"));
+        assert!(response.contains("semanticTokensProvider"));
     }
 }

@@ -1,7 +1,7 @@
 use crate::ast::*;
 use crate::lexer::Span;
 use std::cell::Cell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Clone)]
 struct FnInfo {
@@ -81,6 +81,7 @@ fn validate_struct_cycles(structs: &[StructDef]) -> Result<(), String> {
 pub struct Checker {
     fns: HashMap<String, FnInfo>,
     structs: HashMap<String, StructInfo>,
+    python_imports: HashSet<String>,
     error_span: Cell<Option<Span>>,
 }
 
@@ -130,6 +131,7 @@ impl Checker {
         Self {
             fns,
             structs: HashMap::new(),
+            python_imports: HashSet::new(),
             error_span: Cell::new(None),
         }
     }
@@ -162,6 +164,16 @@ impl Checker {
 
     pub fn check(&mut self, p: &Program) -> Result<(), String> {
         self.error_span.set(None);
+        self.python_imports.clear();
+        for module in &p.python_imports {
+            if module != "math" {
+                return Err(format!(
+                    "E0500: unsupported Python module `{}`; currently supported module is `math`",
+                    module
+                ));
+            }
+            self.python_imports.insert(module.clone());
+        }
         for st in &p.structs {
             if self.structs.contains_key(&st.name) {
                 return Err(format!("E0105: duplicate struct `{}`", st.name));
@@ -641,6 +653,52 @@ impl Checker {
                     self.mark_error_span(expr_span(inner));
                     Err("E0308: the `!` operator requires a `bool` operand".into())
                 }
+            }
+            Expr::PythonCall {
+                module,
+                function,
+                args,
+            } => {
+                if !self.python_imports.contains(module) {
+                    return Err(format!(
+                        "E0501: Python module `{}` must be imported with `import python {};`",
+                        module, module
+                    ));
+                }
+                if module != "math" {
+                    return Err(format!("E0500: unsupported Python module `{}`", module));
+                }
+                let arity = match function.as_str() {
+                    "sqrt" | "sin" | "cos" | "tan" | "asin" | "acos" | "atan" | "exp" | "log"
+                    | "log10" | "floor" | "ceil" | "fabs" => 1,
+                    "pow" | "atan2" => 2,
+                    _ => {
+                        return Err(format!(
+                            "E0502: unsupported function `{}.{}()`",
+                            module, function
+                        ))
+                    }
+                };
+                if args.len() != arity {
+                    return Err(format!(
+                        "E0308: `{}.{}()` expects {} argument(s), but {} were provided",
+                        module,
+                        function,
+                        arity,
+                        args.len()
+                    ));
+                }
+                for arg in args {
+                    let ty = self.check_expr(arg, env, origin)?;
+                    if !matches!(ty, Ty::I64 | Ty::F64) {
+                        self.mark_error_span(expr_span(arg));
+                        return Err(format!(
+                            "E0308: `{}.{}()` arguments must be numeric, found {:?}",
+                            module, function, ty
+                        ));
+                    }
+                }
+                Ok(Ty::F64)
             }
             Expr::Call(n, args) => {
                 if n == "print" || n == "println" || n == "write" {

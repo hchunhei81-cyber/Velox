@@ -6,6 +6,7 @@ pub struct Parser {
     pos: usize,
     last_span: Option<Span>,
     error_span: Option<Span>,
+    condition_depth: usize,
 }
 
 impl Parser {
@@ -32,6 +33,7 @@ impl Parser {
             pos: 0,
             last_span: None,
             error_span: None,
+            condition_depth: 0,
         }
     }
 
@@ -113,7 +115,28 @@ impl Parser {
     pub fn program(&mut self) -> Result<Program, String> {
         let mut fns = Vec::new();
         let mut structs = Vec::new();
+        let mut python_imports = Vec::new();
         while *self.peek() != Tok::Eof {
+            if matches!(self.peek(), Tok::Ident(s) if s == "import") {
+                self.bump();
+                let kind = self.ident()?;
+                if kind != "python" {
+                    return Err(format!(
+                        "unsupported import kind `{}`; expected `python`",
+                        kind
+                    ));
+                }
+                let module = self.ident()?;
+                if python_imports.contains(&module) {
+                    return Err(format!(
+                        "E0500: Python module `{}` is imported more than once",
+                        module
+                    ));
+                }
+                python_imports.push(module);
+                self.eat(&Tok::Semi)?;
+                continue;
+            }
             let start_pos = self.pos;
             let vis = match self.peek() {
                 Tok::Public => {
@@ -159,7 +182,11 @@ impl Parser {
                 fns.push(self.fn_def()?);
             }
         }
-        Ok(Program { fns, structs })
+        Ok(Program {
+            fns,
+            structs,
+            python_imports,
+        })
     }
 
     fn fn_def(&mut self) -> Result<FnDef, String> {
@@ -327,7 +354,10 @@ impl Parser {
                 return Ok(located(Expr::Var(name), span));
             }
         }
-        self.expr()
+        self.condition_depth += 1;
+        let result = self.expr();
+        self.condition_depth -= 1;
+        result
     }
 
     fn expr(&mut self) -> Result<Expr, String> {
@@ -443,6 +473,37 @@ impl Parser {
             Tok::False => Ok(located(Expr::Bool(false), token_span)),
             Tok::Str(s) => Ok(located(Expr::Str(s), token_span)),
             Tok::Ident(name) => {
+                if name == "py" {
+                    self.eat(&Tok::Dot)?;
+                    let module = self.ident()?;
+                    self.eat(&Tok::Dot)?;
+                    let function = self.ident()?;
+                    self.eat(&Tok::LParen)?;
+                    let mut args = Vec::new();
+                    if *self.peek() != Tok::RParen {
+                        loop {
+                            args.push(self.expr()?);
+                            if *self.peek() == Tok::Comma {
+                                self.bump();
+                            } else {
+                                break;
+                            }
+                        }
+                    }
+                    self.eat(&Tok::RParen)?;
+                    let end = self.last_span.unwrap_or(token_span).end;
+                    return Ok(located(
+                        Expr::PythonCall {
+                            module,
+                            function,
+                            args,
+                        },
+                        Span {
+                            start: token_span.start,
+                            end,
+                        },
+                    ));
+                }
                 if *self.peek() == Tok::LParen {
                     self.bump();
                     let mut args = Vec::new();
@@ -466,7 +527,7 @@ impl Parser {
                             end,
                         },
                     ))
-                } else if *self.peek() == Tok::LBrace {
+                } else if *self.peek() == Tok::LBrace && self.condition_depth == 0 {
                     self.bump();
                     let mut fields = Vec::new();
                     if *self.peek() != Tok::RBrace {

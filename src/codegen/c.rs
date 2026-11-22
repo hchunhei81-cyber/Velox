@@ -24,6 +24,87 @@ impl CEmitter {
         self.out
             .push_str("#include <stdio.h>\n#include <stdint.h>\n#include <stdbool.h>\n\n");
         self.out.push_str("typedef const char* velox_str;\n\n");
+        if !p.python_imports.is_empty() {
+            self.out
+                .push_str("#define PY_SSIZE_T_CLEAN\n#include <Python.h>\n#include <stdlib.h>\n\n");
+            self.out.push_str(
+                r#"
+static double velox_py_call_f64(const char *module_name,
+                                const char *function_name,
+                                int argc,
+                                double *argv) {
+    if (!Py_IsInitialized()) {
+        Py_Initialize();
+        PyEval_SaveThread();
+    }
+    PyGILState_STATE gil = PyGILState_Ensure();
+    PyObject *module = PyImport_ImportModule(module_name);
+    if (!module) {
+        PyErr_Print();
+        PyGILState_Release(gil);
+        exit(EXIT_FAILURE);
+    }
+    PyObject *function = PyObject_GetAttrString(module, function_name);
+    if (!function || !PyCallable_Check(function)) {
+        PyErr_Print();
+        Py_XDECREF(function);
+        Py_DECREF(module);
+        PyGILState_Release(gil);
+        exit(EXIT_FAILURE);
+    }
+    PyObject *args = PyTuple_New(argc);
+    if (!args) {
+        PyErr_Print();
+        Py_DECREF(function);
+        Py_DECREF(module);
+        PyGILState_Release(gil);
+        exit(EXIT_FAILURE);
+    }
+    for (int i = 0; i < argc; ++i) {
+        PyObject *value = PyFloat_FromDouble(argv[i]);
+        if (!value) {
+            PyErr_Print();
+            Py_DECREF(args);
+            Py_DECREF(function);
+            Py_DECREF(module);
+            PyGILState_Release(gil);
+            exit(EXIT_FAILURE);
+        }
+        PyTuple_SET_ITEM(args, i, value);
+    }
+    PyObject *result = PyObject_CallObject(function, args);
+    PyObject *number = result ? PyNumber_Float(result) : NULL;
+    if (!number) {
+        PyErr_Print();
+        Py_XDECREF(result);
+        Py_DECREF(args);
+        Py_DECREF(function);
+        Py_DECREF(module);
+        PyGILState_Release(gil);
+        exit(EXIT_FAILURE);
+    }
+    double value = PyFloat_AsDouble(number);
+    if (PyErr_Occurred()) {
+        PyErr_Print();
+        Py_DECREF(number);
+        Py_DECREF(result);
+        Py_DECREF(args);
+        Py_DECREF(function);
+        Py_DECREF(module);
+        PyGILState_Release(gil);
+        exit(EXIT_FAILURE);
+    }
+    Py_DECREF(number);
+    Py_DECREF(result);
+    Py_DECREF(args);
+    Py_DECREF(function);
+    Py_DECREF(module);
+    PyGILState_Release(gil);
+    return value;
+}
+"#,
+            );
+        }
         // Register every struct before generating definitions.
         for st in &p.structs {
             let fields = st
@@ -125,6 +206,10 @@ impl CEmitter {
             }
             if f.name == "main" {
                 self.out.push_str("int main() {\n");
+                if !p.python_imports.is_empty() {
+                    self.out
+                        .push_str("  Py_Initialize();\n  PyEval_SaveThread();\n");
+                }
                 for s in &f.body {
                     self.emit_stmt(s, 1);
                 }
@@ -291,6 +376,7 @@ impl CEmitter {
             Expr::Str(_) => Ty::Str,
             Expr::Var(n) => self.var_ty.get(n).cloned().unwrap_or(Ty::I64),
             Expr::Call(n, _) => self.fn_ret.get(n).cloned().unwrap_or(Ty::I64),
+            Expr::PythonCall { .. } => Ty::F64,
             Expr::StructInit(n, _) => Ty::Struct(n.clone()),
             Expr::Field(base, field) => match self.expr_ty(base) {
                 Ty::Struct(ref n) => self
@@ -371,6 +457,23 @@ impl CEmitter {
                     BinOp::Or => "||",
                 };
                 format!("({} {} {})", lo, o, ro)
+            }
+            Expr::PythonCall {
+                module,
+                function,
+                args,
+            } => {
+                let values: Vec<String> = args
+                    .iter()
+                    .map(|arg| format!("(double)({})", self.expr(arg)))
+                    .collect();
+                format!(
+                    "velox_py_call_f64(\"{}\", \"{}\", {}, (double[]){{{}}})",
+                    escape_c_string(module),
+                    escape_c_string(function),
+                    args.len(),
+                    values.join(", ")
+                )
             }
             Expr::Call(n, args) => {
                 if n == "print" || n == "println" || n == "write" {
@@ -596,7 +699,7 @@ fn count_parallel_reads(
             count_parallel_reads(right, outer, locals, access);
         }
 
-        Expr::Call(_, args) => {
+        Expr::Call(_, args) | Expr::PythonCall { args, .. } => {
             for arg in args {
                 count_parallel_reads(arg, outer, locals, access);
             }
@@ -641,7 +744,7 @@ fn count_var_occurrences(expr: &Expr, target: &str) -> usize {
             count_var_occurrences(left, target) + count_var_occurrences(right, target)
         }
 
-        Expr::Call(_, args) => args
+        Expr::Call(_, args) | Expr::PythonCall { args, .. } => args
             .iter()
             .map(|arg| count_var_occurrences(arg, target))
             .sum(),

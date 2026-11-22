@@ -26,6 +26,11 @@ pub enum Expr {
     Var(String),
     Bin(Box<Expr>, BinOp, Box<Expr>),
     Call(String, Vec<Expr>),
+    PythonCall {
+        module: String,
+        function: String,
+        args: Vec<Expr>,
+    },
     StructInit(String, Vec<(String, Expr)>),
     Field(Box<Expr>, String),
     Located(Box<Expr>, crate::lexer::Span),
@@ -92,4 +97,5 @@ pub struct StructDef {
 pub struct Program {
     pub fns: Vec<FnDef>,
     pub structs: Vec<StructDef>,
+    pub python_imports: Vec<String>,
 }

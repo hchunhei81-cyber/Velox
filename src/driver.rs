@@ -1,3 +1,43 @@
+fn add_python_link_flags(cmd: &mut Command) -> Result<(), String> {
+    let includes = Command::new("python3-config")
+        .arg("--includes")
+        .output()
+        .map_err(|e| format!("Python embedding requires `python3-config`: {}", e))?;
+    if !includes.status.success() {
+        return Err("python3-config --includes failed".into());
+    }
+    cmd.args(String::from_utf8_lossy(&includes.stdout).split_whitespace());
+
+    let libdir = Command::new("python3")
+        .args([
+            "-c",
+            "import sysconfig; print(sysconfig.get_config_var('LIBDIR') or '')",
+        ])
+        .output()
+        .map_err(|e| format!("failed to query Python library directory: {}", e))?;
+    if !libdir.status.success() {
+        return Err("failed to query Python library directory".into());
+    }
+
+    let path = String::from_utf8_lossy(&libdir.stdout).trim().to_string();
+    if path.is_empty() {
+        return Err("Python LIBDIR is empty".into());
+    }
+    cmd.arg(format!("-L{}", path));
+    cmd.arg(format!("-Wl,-rpath,{}", path));
+
+    let ldflags = Command::new("python3-config")
+        .args(["--ldflags", "--embed"])
+        .output()
+        .map_err(|e| format!("failed to query Python linker flags: {}", e))?;
+    if !ldflags.status.success() {
+        return Err("python3-config --ldflags --embed failed".into());
+    }
+    cmd.args(String::from_utf8_lossy(&ldflags.stdout).split_whitespace());
+
+    Ok(())
+}
+
 use crate::ast::{FnDef, Program, StructDef, Vis};
 use crate::ffi::{self, FfiFn};
 use std::collections::HashSet;
@@ -20,6 +60,7 @@ pub fn compile(src_path: &str, out: &str) -> Result<(), String> {
     // 1. Parse .vx source files
     let mut vx_fns = Vec::new();
     let mut vx_structs: Vec<StructDef> = Vec::new();
+    let mut python_imports = Vec::new();
     for f in &vx_files {
         let raw = fs::read_to_string(f)
             .map_err(|e| format!("E0200: cannot read `{}`: {}", f.display(), e))?;
@@ -34,6 +75,7 @@ pub fn compile(src_path: &str, out: &str) -> Result<(), String> {
         for sd in &mut prog.structs {
             sd.origin = origin.clone();
         }
+        python_imports.extend(prog.python_imports);
         vx_fns.extend(prog.fns);
         vx_structs.extend(prog.structs);
     }
@@ -64,6 +106,7 @@ pub fn compile(src_path: &str, out: &str) -> Result<(), String> {
     let prog = Program {
         fns: vx_fns,
         structs: vx_structs,
+        python_imports,
     };
     let mut checker = crate::types::Checker::new();
     for f in &extern_fns {
@@ -81,6 +124,7 @@ pub fn compile(src_path: &str, out: &str) -> Result<(), String> {
     let prog = Program {
         fns: all,
         structs: prog.structs,
+        python_imports: prog.python_imports,
     };
     let c = crate::codegen::c::CEmitter::new().emit(&prog)?;
 
@@ -91,6 +135,9 @@ pub fn compile(src_path: &str, out: &str) -> Result<(), String> {
     let openmp = has_openmp();
     let mut cmd = Command::new("clang");
     cmd.arg("-O2");
+    if !prog.python_imports.is_empty() {
+        add_python_link_flags(&mut cmd)?;
+    }
     if openmp {
         cmd.arg("-fopenmp");
     } else {
@@ -121,6 +168,7 @@ pub fn compile_py(src_path: &str, out_dir: &str) -> Result<(), String> {
 
     let mut vx_fns = Vec::new();
     let mut vx_structs: Vec<StructDef> = Vec::new();
+    let mut python_imports = Vec::new();
     let mut exports: Vec<FfiFn> = Vec::new();
     for f in &vx_files {
         let raw = fs::read_to_string(f).map_err(|e| format!("E0200: {}", e))?;
@@ -153,6 +201,7 @@ pub fn compile_py(src_path: &str, out_dir: &str) -> Result<(), String> {
         for sd in &mut prog.structs {
             sd.origin = origin.clone();
         }
+        python_imports.extend(prog.python_imports);
         vx_fns.extend(prog.fns);
         vx_structs.extend(prog.structs);
     }
@@ -178,9 +227,16 @@ pub fn compile_py(src_path: &str, out_dir: &str) -> Result<(), String> {
         }
     }
 
+    if !python_imports.is_empty() {
+        return Err("E0503: Python imports are not supported in `--py` mode yet".into());
+    }
+
     let prog = Program {
         fns: vx_fns,
+
         structs: vx_structs,
+
+        python_imports,
     };
     let mut checker = crate::types::Checker::new();
     for f in &extern_fns {
@@ -197,6 +253,7 @@ pub fn compile_py(src_path: &str, out_dir: &str) -> Result<(), String> {
     let prog = Program {
         fns: all,
         structs: prog.structs,
+        python_imports: prog.python_imports,
     };
     let c = crate::codegen::c::CEmitter::new().emit(&prog)?;
 

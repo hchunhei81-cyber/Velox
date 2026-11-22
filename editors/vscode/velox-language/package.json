@@ -1,7 +1,7 @@
 {
   "name": "velox-language",
   "displayName": "Velox Language",
-  "description": "Velox language support with syntax highlighting, diagnostics, completion, hover and go-to-definition",
+  "description": "Velox language support with syntax highlighting, diagnostics, completion, semantic highlighting, hover and go-to-definition",
   "version": "0.2.0",
   "publisher": "velox-lang",
   "engines": {

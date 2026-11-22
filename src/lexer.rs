@@ -121,6 +121,24 @@ impl<'a> Lexer<'a> {
                 }
                 continue;
             }
+            if self.peek() == b'/' && self.peek2() == b'*' {
+                self.bump();
+                self.bump();
+                let mut closed = false;
+                while self.pos < self.src.len() {
+                    if self.peek() == b'*' && self.peek2() == b'/' {
+                        self.bump();
+                        self.bump();
+                        closed = true;
+                        break;
+                    }
+                    self.bump();
+                }
+                if !closed {
+                    return Err("unterminated block comment".into());
+                }
+                continue;
+            }
             let c = self.peek();
             if self.pos >= self.src.len() {
                 out.push(SpannedToken {
@@ -344,5 +362,45 @@ impl<'a> Lexer<'a> {
             });
         }
         Ok(out)
+    }
+}
+
+#[cfg(test)]
+mod comment_tests {
+    use super::*;
+
+    #[test]
+    fn line_and_block_comments_are_ignored() {
+        let source = r#"
+            // line comment
+            fn main() -> void {
+                /* block
+                   comment */
+                let value: i64 = 42; // trailing comment
+            }
+        "#;
+        let tokens = Lexer::new(source).tokenize().unwrap();
+        assert!(tokens.contains(&Tok::Fn));
+        assert!(tokens.contains(&Tok::Let));
+        assert!(tokens.contains(&Tok::Int(42)));
+        assert!(!tokens
+            .iter()
+            .any(|t| matches!(t, Tok::Ident(s) if s == "comment")));
+    }
+
+    #[test]
+    fn unterminated_block_comment_is_rejected() {
+        let result = Lexer::new("fn main() -> void { /* missing end").tokenize();
+        assert!(result.unwrap_err().contains("unterminated block comment"));
+    }
+
+    #[test]
+    fn comment_markers_inside_strings_are_not_comments() {
+        let tokens = Lexer::new(r#"fn main() -> void { let s: str = "/* text */"; }"#)
+            .tokenize()
+            .unwrap();
+        assert!(tokens
+            .iter()
+            .any(|t| matches!(t, Tok::Str(s) if s == "/* text */")));
     }
 }

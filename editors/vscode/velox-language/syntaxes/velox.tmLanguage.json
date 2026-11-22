@@ -14,6 +14,9 @@
       "include": "#constants"
     },
     {
+      "include": "#imports"
+    },
+    {
       "include": "#attributes"
     },
     {
@@ -179,7 +182,7 @@
       "patterns": [
         {
           "name": "support.function.builtin.velox",
-          "match": "\\b(print|println)\\b(?=\\s*\\()"
+          "match": "\\\\b(print|println|write)\\\\b(?=\\\\s*\\\\()"
         }
       ]
     },
@@ -187,7 +190,7 @@
       "patterns": [
         {
           "name": "keyword.control.velox",
-          "match": "\\b(fn|let|mut|if|else|while|for|in|return|parallel|struct|enum|using|extern)\\b"
+          "match": "\\\\b(fn|let|mut|if|else|while|for|in|return|parallel|struct|import|python)\\\\b"
         },
         {
           "name": "storage.modifier.velox",
@@ -211,7 +214,7 @@
         },
         {
           "name": "keyword.operator.comparison.velox",
-          "match": "==|!=|<=|>=|<|>"
+          "match": "==|<=|>=|<|>"
         },
         {
           "name": "keyword.operator.arithmetic.velox",
@@ -232,6 +235,26 @@
         {
           "name": "punctuation.section.braces.velox",
           "match": "[{}\\[\\]()]"
+        }
+      ]
+    },
+    "imports": {
+      "patterns": [
+        {
+          "name": "meta.import.velox",
+          "match": "\\\\b(import)\\\\s+(python)\\\\b",
+          "captures": {
+            "1": {
+              "name": "keyword.control.import.velox"
+            },
+            "2": {
+              "name": "storage.type.velox"
+            }
+          }
+        },
+        {
+          "name": "support.module.velox",
+          "match": "\\\\bpy\\\\b"
         }
       ]
     }

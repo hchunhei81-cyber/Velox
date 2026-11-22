@@ -149,18 +149,25 @@
     ],
     "description": "Declare a boolean"
   },
-  "Using File": {
-    "prefix": "using",
-    "body": [
-      "using \"${1:module.vx}\";"
-    ],
-    "description": "Import another Velox source file"
-  },
   "Logical Condition": {
     "prefix": "andor",
     "body": [
       "${1:ready} && ${2:valid}"
     ],
     "description": "Boolean AND expression"
+  },
+  "Python Import": {
+    "prefix": "pyimport",
+    "body": [
+      "import python ${1:math};"
+    ],
+    "description": "Import a Python module"
+  },
+  "Python Call": {
+    "prefix": "pycall",
+    "body": [
+      "py.${1:math}.${2:sqrt}(${3:144.0})"
+    ],
+    "description": "Call a function from an imported Python module"
   }
 }
