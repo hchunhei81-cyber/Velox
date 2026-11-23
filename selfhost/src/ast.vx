@@ -42,14 +42,7 @@ pub fn ast_has_error(nodes: i64) -> bool {
 }
 
 pub fn ast_node_kind(nodes: i64, index: i64) -> i64 {
-    let mut current: i64 = list_i64_get(nodes, 3);
-    let mut i: i64 = 0;
-    while i < index && current >= 0 {
-        current = list_i64_get(nodes, current * 8 + 7);
-        i = i + 1;
-    }
-    if current < 0 { return -1; }
-    return list_i64_get(nodes, current * 8);
+    return ast_node_data(nodes, index, 0);
 }
 
 pub fn ast_node_start(nodes: i64, index: i64) -> i64 {

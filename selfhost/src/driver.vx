@@ -1,1 +1,194 @@
-// Velox self-hosted compiler: compiler driver
+// Velox Stage 1 recursive multi-file compiler driver
+
+fn drv_contains(haystack: str, needle: str) -> bool {
+    let h: i64 = str_len(haystack);
+    let n: i64 = str_len(needle);
+    let mut i: i64 = 0;
+    while i + n <= h {
+        if str_eq(str_slice(haystack, i, i + n), needle) {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn drv_expand(path: str, stack: str) -> str {
+    let marker: str = str_concat(
+        str_concat("|", path), "|"
+    );
+
+    if drv_contains(stack, marker) {
+        println("E0203: circular dependency");
+        println(path);
+        return "";
+    }
+
+    let raw: str = read_file(path);
+    if str_len(raw) == 0 {
+        println("E0200: cannot read source");
+        println(path);
+        return "";
+    }
+
+    let next_stack: str = str_concat(stack, marker);
+    let length: i64 = str_len(raw);
+    let mut pos: i64 = 0;
+    let mut result: str = "";
+
+    let mut dir_end: i64 = 0;
+    let mut scan: i64 = 0;
+    while scan < str_len(path) {
+        if str_byte_at(path, scan) == 47 {
+            dir_end = scan + 1;
+        }
+        scan = scan + 1;
+    }
+    let dir: str = str_slice(path, 0, dir_end);
+
+    while pos < length {
+        let line_start: i64 = pos;
+
+        while pos < length && (str_byte_at(raw, pos) < 10 || str_byte_at(raw, pos) > 10) {
+            pos = pos + 1;
+        }
+
+        let line_end: i64 = pos;
+        let mut trim_start: i64 = line_start;
+
+        while trim_start < line_end &&
+            (str_byte_at(raw, trim_start) == 32 ||
+             str_byte_at(raw, trim_start) == 9) {
+            trim_start = trim_start + 1;
+        }
+
+        let is_using: bool = line_end - trim_start >= 7 &&
+            str_eq(
+                str_slice(raw, trim_start, trim_start + 7),
+                "using \""
+            );
+
+        if is_using {
+            let mut dep_end: i64 = trim_start + 7;
+            while dep_end < line_end &&
+                str_byte_at(raw, dep_end) < 34 {
+                dep_end = dep_end + 1;
+            }
+
+            if dep_end >= line_end {
+                println("E0200: malformed using directive");
+                return "";
+            }
+
+            let dep: str = str_slice(raw, trim_start + 7, dep_end);
+            let dep_path: str = str_concat(dir, dep);
+            let expanded: str = drv_expand(dep_path, next_stack);
+
+            if str_len(expanded) == 0 {
+                return "";
+            }
+
+            result = str_concat(result, expanded);
+            result = str_concat(result, "\n");
+        } else {
+            result = str_concat(
+                result,
+                str_slice(raw, line_start, line_end)
+            );
+            result = str_concat(result, "\n");
+        }
+
+        if pos < length {
+            pos = pos + 1;
+        }
+    }
+
+    return result;
+}
+
+fn drv_strip_using(source: str) -> str {
+    let mut result: str = "";
+    let mut pos: i64 = 0;
+    let length: i64 = str_len(source);
+
+    while pos < length {
+        let line_start: i64 = pos;
+        while pos < length && (str_byte_at(source, pos) < 10 || str_byte_at(source, pos) > 10) {
+            pos = pos + 1;
+        }
+        let line_end: i64 = pos;
+        let mut trim_start: i64 = line_start;
+
+        while trim_start < line_end &&
+            (str_byte_at(source, trim_start) == 32 ||
+             str_byte_at(source, trim_start) == 9) {
+            trim_start = trim_start + 1;
+        }
+
+        let skip: bool = line_end - trim_start >= 7 &&
+            str_eq(
+                str_slice(source, trim_start, trim_start + 7),
+                "using \""
+            );
+
+        if skip == false {
+            result = str_concat(
+                result,
+                str_slice(source, line_start, line_end)
+            );
+            result = str_concat(result, "\n");
+        }
+
+        if pos < length {
+            pos = pos + 1;
+        }
+    }
+
+    return result;
+}
+
+pub fn compile_source(source: str, output_path: str) -> bool {
+    let clean: str = drv_strip_using(source);
+    let tokens: i64 = tokenize(clean);
+    let nodes: i64 = parse_program(tokens);
+
+    if ast_has_error(nodes) {
+        println("E1001: parser failed");
+        println(ast_error_position(nodes));
+        return false;
+    }
+
+    let state: i64 = list_i64_new();
+    if typecheck(state, clean, nodes) == false {
+        println("E1002: type checking failed");
+        println(typecheck_error_position(state));
+        return false;
+    }
+
+    let generated: str = generate_c(clean, nodes);
+    if str_len(generated) == 0 {
+        println("E1003: code generation failed");
+        return false;
+    }
+
+    let c_path: str = str_concat(output_path, ".c");
+    if write_file(c_path, generated) == false {
+        println("E1004: cannot write generated C");
+        return false;
+    }
+
+    println("C generated:");
+    println(c_path);
+    return true;
+}
+
+pub fn compile_file(input_path: str, output_path: str) -> bool {
+    let expanded: str = drv_expand(input_path, "|");
+
+    if str_len(expanded) == 0 {
+        println("E1005: dependency expansion failed");
+        return false;
+    }
+
+    return compile_source(expanded, output_path);
+}

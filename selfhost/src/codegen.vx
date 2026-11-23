@@ -1,1 +1,363 @@
 // Velox self-hosted compiler: C backend
+
+fn cg_slice(source: str, start: i64, end: i64) -> str {
+    if start < 0 || end < start || end > str_len(source) {
+        return "";
+    }
+    return str_slice(source, start, end);
+}
+
+fn cg_node(nodes: i64, node: i64, field: i64) -> i64 {
+    return ast_node_data(nodes, node, field);
+}
+
+fn cg_mangle(prefix: str, name: str) -> str {
+    let digits: str = "0123456789abcdef";
+    let mut result: str = prefix;
+    let mut i: i64 = 0;
+
+    while i < str_len(name) {
+        let byte: i64 = str_byte_at(name, i);
+        let high: i64 = byte / 16;
+        let low: i64 = byte % 16;
+        result = str_concat(result, str_slice(digits, high, high + 1));
+        result = str_concat(result, str_slice(digits, low, low + 1));
+        i = i + 1;
+    }
+    return result;
+}
+
+fn cg_name(source: str, nodes: i64, node: i64, prefix: str) -> str {
+    return cg_mangle(prefix,
+        cg_slice(source, cg_node(nodes, node, 1),
+                        cg_node(nodes, node, 2)));
+}
+
+fn cg_type(source: str, nodes: i64, node: i64) -> str {
+    if node < 0 { return "void"; }
+    let name: str = cg_slice(source,
+        cg_node(nodes, node, 1), cg_node(nodes, node, 2));
+
+    if str_eq(name, "i64") { return "int64_t"; }
+    if str_eq(name, "f64") { return "double"; }
+    if str_eq(name, "bool") { return "bool"; }
+    if str_eq(name, "str") { return "velox_str"; }
+    return cg_mangle("vxt_", name);
+}
+
+fn cg_operator(op: i64) -> str {
+    if op == 30 { return "+"; }
+    if op == 31 { return "-"; }
+    if op == 32 { return "*"; }
+    if op == 33 { return "/"; }
+    if op == 34 { return "%"; }
+    if op == 36 { return "=="; }
+    if op == 37 { return "<"; }
+    if op == 38 { return ">"; }
+    if op == 39 { return "<="; }
+    if op == 40 { return ">="; }
+    if op == 41 { return "&&"; }
+    if op == 42 { return "||"; }
+    return "/* unsupported operator */";
+}
+
+fn cg_expr(source: str, nodes: i64, node: i64) -> str {
+    if node < 0 { return "0"; }
+
+    let kind: i64 = cg_node(nodes, node, 0);
+    let start: i64 = cg_node(nodes, node, 1);
+    let end: i64 = cg_node(nodes, node, 2);
+
+    if kind == 20 || kind == 21 || kind == 22 {
+        return cg_slice(source, start, end);
+    }
+    if kind == 23 {
+        if cg_node(nodes, node, 3) == 1 { return "true"; }
+        return "false";
+    }
+    if kind == 24 {
+        return cg_mangle("vxv_", cg_slice(source, start, end));
+    }
+    if kind == 25 {
+        return str_concat("(-", str_concat(
+            cg_expr(source, nodes, cg_node(nodes, node, 3)), ")"));
+    }
+    if kind == 26 {
+        return str_concat("(!", str_concat(
+            cg_expr(source, nodes, cg_node(nodes, node, 3)), ")"));
+    }
+    if kind == 27 {
+        let op: str = cg_operator(cg_node(nodes, node, 3));
+        let left: str = cg_expr(source, nodes, cg_node(nodes, node, 4));
+        let right: str = cg_expr(source, nodes, cg_node(nodes, node, 5));
+        return str_concat("(", str_concat(left,
+            str_concat(" ", str_concat(op,
+                str_concat(" ", str_concat(right, ")"))))));
+    }
+    if kind == 29 {
+        let base: str = cg_expr(source, nodes, cg_node(nodes, node, 3));
+        let mut field: str = cg_slice(source,
+            cg_node(nodes, node, 4), cg_node(nodes, node, 5));
+        return str_concat("(", str_concat(base,
+            str_concat(").", cg_mangle("vxm_", field))));
+    }
+    if kind == 28 {
+        let callee: i64 = cg_node(nodes, node, 3);
+        let args: i64 = cg_node(nodes, node, 4);
+        let name: str = cg_slice(source,
+            cg_node(nodes, callee, 1), cg_node(nodes, callee, 2));
+        let mut result: str = "";
+        let mut current: i64 = args;
+        let mut first: i64 = 1;
+
+        if str_eq(name, "print") || str_eq(name, "println") {
+            if current < 0 { return "((void)0)"; }
+            let value: str = cg_expr(source, nodes, current);
+            let value_kind: i64 = cg_node(nodes, current, 0);
+            if value_kind == 22 {
+                return str_concat("printf(\"%s\\n\", ", str_concat(value, ")"));
+            }
+            if value_kind == 23 {
+                return str_concat("printf(\"%s\\n\", (", str_concat(
+                    value, ") ? \"true\" : \"false\")"));
+            }
+            return str_concat("printf(\"%lld\\n\", (long long)(",
+                str_concat(value, "))"));
+        }
+
+        result = cg_mangle("vxf_", name);
+        result = str_concat(result, "(");
+        while current >= 0 {
+            if first == 0 { result = str_concat(result, ", "); }
+            result = str_concat(result, cg_expr(source, nodes, current));
+            first = 0;
+            current = cg_node(nodes, current, 7);
+        }
+        return str_concat(result, ")");
+    }
+    if kind == 30 {
+        let type_node: i64 = cg_node(nodes, node, 3);
+        let type_name: str = cg_slice(source,
+            cg_node(nodes, type_node, 1), cg_node(nodes, type_node, 2));
+        let args: i64 = cg_node(nodes, node, 4);
+        let mut result: str = str_concat("(",
+            str_concat(cg_mangle("vxt_", type_name), "){ "));
+        let mut current: i64 = args;
+        let mut first: i64 = 1;
+
+        while current >= 0 {
+            if first == 0 { result = str_concat(result, ", "); }
+            let mut field: str = cg_slice(source,
+                cg_node(nodes, current, 3), cg_node(nodes, current, 4));
+            result = str_concat(result, str_concat(".",
+                str_concat(cg_mangle("vxm_", field), " = ")));
+            result = str_concat(result,
+                cg_expr(source, nodes, cg_node(nodes, current, 5)));
+            first = 0;
+            current = cg_node(nodes, current, 7);
+        }
+        return str_concat(result, " }");
+    }
+    return "0";
+}
+
+fn cg_block(source: str, nodes: i64, block: i64) -> str {
+    let mut result: str = "{\n";
+    let mut statement: i64 = cg_node(nodes, block, 3);
+
+    while statement >= 0 {
+        result = str_concat(result, cg_stmt(source, nodes, statement));
+        statement = cg_node(nodes, statement, 7);
+    }
+    return str_concat(result, "}\n");
+}
+
+fn cg_stmt(source: str, nodes: i64, node: i64) -> str {
+    let kind: i64 = cg_node(nodes, node, 0);
+
+    if kind == 6 {
+        let mut mutable: i64 = cg_node(nodes, node, 3);
+        let type_node: i64 = cg_node(nodes, node, 4);
+        let init: i64 = cg_node(nodes, node, 5);
+        let name_start: i64 = cg_node(nodes, node, 6);
+        let mut name_end: i64 = name_start;
+        while name_end < str_len(source) &&
+              ((str_byte_at(source, name_end) >= 48 &&
+                str_byte_at(source, name_end) <= 57) ||
+               (str_byte_at(source, name_end) >= 65 &&
+                str_byte_at(source, name_end) <= 90) ||
+               (str_byte_at(source, name_end) >= 97 &&
+                str_byte_at(source, name_end) <= 122) ||
+                str_byte_at(source, name_end) == 95) {
+            name_end = name_end + 1;
+        }
+        let name: str = cg_mangle("vxv_",
+            cg_slice(source, name_start, name_end));
+        let mut ty: str = cg_type(source, nodes, type_node);
+        if type_node < 0 {
+            ty = "int64_t";
+        }
+        return str_concat("    ", str_concat(ty,
+            str_concat(" ", str_concat(name,
+                str_concat(" = ", str_concat(
+                    cg_expr(source, nodes, init), ";\n"))))));
+    }
+    if kind == 7 {
+        return str_concat("    ",
+            str_concat(cg_expr(source, nodes, cg_node(nodes, node, 3)),
+                str_concat(" = ", str_concat(
+                    cg_expr(source, nodes, cg_node(nodes, node, 4)), ";\n"))));
+    }
+    if kind == 8 {
+        return str_concat("    ",
+            str_concat(cg_expr(source, nodes, cg_node(nodes, node, 3)),
+                str_concat(" = ", str_concat(
+                    cg_expr(source, nodes, cg_node(nodes, node, 4)), ";\n"))));
+    }
+    if kind == 9 {
+        let value: i64 = cg_node(nodes, node, 3);
+        if value < 0 { return "    return;\n"; }
+        return str_concat("    return ",
+            str_concat(cg_expr(source, nodes, value), ";\n"));
+    }
+    if kind == 10 {
+        let condition: str = cg_expr(source, nodes, cg_node(nodes, node, 3));
+        let then_code: str = cg_block(source, nodes, cg_node(nodes, node, 4));
+        let otherwise: i64 = cg_node(nodes, node, 5);
+        let mut result: str = str_concat("    if (", str_concat(condition,
+            str_concat(") ", then_code)));
+        if otherwise >= 0 {
+            if cg_node(nodes, otherwise, 0) == 5 {
+                result = str_concat(result, str_concat("else ",
+                    cg_block(source, nodes, otherwise)));
+            } else {
+                result = str_concat(result, cg_stmt(source, nodes, otherwise));
+            }
+        }
+        return result;
+    }
+    if kind == 11 {
+        return str_concat("    while (",
+            str_concat(cg_expr(source, nodes, cg_node(nodes, node, 3)),
+                str_concat(") ",
+                    cg_block(source, nodes, cg_node(nodes, node, 4)))));
+    }
+    if kind == 12 {
+        let from: str = cg_expr(source, nodes, cg_node(nodes, node, 3));
+        let to: str = cg_expr(source, nodes, cg_node(nodes, node, 4));
+        let body: str = cg_block(source, nodes, cg_node(nodes, node, 5));
+        let name_start: i64 = cg_node(nodes, node, 6);
+        let mut name_end: i64 = name_start;
+        while name_end < str_len(source) &&
+              ((str_byte_at(source, name_end) >= 48 &&
+                str_byte_at(source, name_end) <= 57) ||
+               (str_byte_at(source, name_end) >= 65 &&
+                str_byte_at(source, name_end) <= 90) ||
+               (str_byte_at(source, name_end) >= 97 &&
+                str_byte_at(source, name_end) <= 122) ||
+                str_byte_at(source, name_end) == 95) {
+            name_end = name_end + 1;
+        }
+        let name: str = cg_mangle("vxv_",
+            cg_slice(source, name_start, name_end));
+        let mut loop_head: str = "    for (int64_t ";
+        loop_head = str_concat(loop_head, name);
+        loop_head = str_concat(loop_head, " = ");
+        loop_head = str_concat(loop_head, from);
+        loop_head = str_concat(loop_head, "; ");
+        loop_head = str_concat(loop_head, name);
+        loop_head = str_concat(loop_head, " < ");
+        loop_head = str_concat(loop_head, to);
+        loop_head = str_concat(loop_head, "; ");
+        loop_head = str_concat(loop_head, name);
+        loop_head = str_concat(loop_head, "++) ");
+        return str_concat(loop_head, body);
+    }
+    if kind == 14 {
+        return str_concat("    ",
+            str_concat(cg_expr(source, nodes, cg_node(nodes, node, 3)), ";\n"));
+    }
+    return "";
+}
+
+fn cg_function(source: str, nodes: i64, function: i64) -> str {
+    let name_node: i64 = cg_node(nodes, function, 4);
+    let meta: i64 = cg_node(nodes, function, 5);
+    let name: str = cg_slice(source,
+        cg_node(nodes, name_node, 1), cg_node(nodes, name_node, 2));
+    let params: i64 = cg_node(nodes, meta, 3);
+    let ret: i64 = cg_node(nodes, meta, 4);
+    let body: i64 = cg_node(nodes, meta, 5);
+
+    let mut result: str = "";
+    if str_eq(name, "main") {
+        result = "int main(";
+    } else {
+        result = str_concat(cg_type(source, nodes, ret),
+            str_concat(" ", str_concat(cg_mangle("vxf_", name), "(")));
+    }
+
+    let mut current: i64 = params;
+    let mut first: i64 = 1;
+    while current >= 0 {
+        if first == 0 { result = str_concat(result, ", "); }
+        let ptype: str = cg_type(source, nodes, cg_node(nodes, current, 3));
+        let pname: str = cg_slice(source,
+            cg_node(nodes, current, 1), cg_node(nodes, current, 2));
+        result = str_concat(result, str_concat(ptype,
+            str_concat(" ", cg_mangle("vxv_", pname))));
+        first = 0;
+        current = cg_node(nodes, current, 7);
+    }
+    if first == 1 { result = str_concat(result, "void"); }
+    result = str_concat(result, ") ");
+    result = str_concat(result, cg_block(source, nodes, body));
+    if str_eq(name, "main") {
+        result = str_concat(result, "\n");
+    }
+    return result;
+}
+
+fn cg_struct(source: str, nodes: i64, structure: i64) -> str {
+    let name: str = cg_slice(source,
+        cg_node(nodes, structure, 5), cg_node(nodes, structure, 6));
+    let mut result: str = str_concat("typedef struct ",
+        str_concat(cg_mangle("vxt_", name),
+            str_concat(" {\n", "")));
+    let mut field: i64 = cg_node(nodes, structure, 4);
+    while field >= 0 {
+        let mut ty: str = cg_type(source, nodes, cg_node(nodes, field, 3));
+        let fname: str = cg_slice(source,
+            cg_node(nodes, field, 1), cg_node(nodes, field, 2));
+        result = str_concat(result, str_concat("    ", str_concat(ty,
+            str_concat(" ", str_concat(cg_mangle("vxm_", fname), ";\n")))));
+        field = cg_node(nodes, field, 7);
+    }
+    return str_concat(result, str_concat("} ",
+        str_concat(cg_mangle("vxt_", name), ";\n\n")));
+}
+
+pub fn generate_c(source: str, nodes: i64) -> str {
+    if ast_has_error(nodes) { return ""; }
+
+    let mut result: str =
+        "#include <stdio.h>\n#include <stdint.h>\n#include <stdbool.h>\n#include <stdlib.h>\n#include <string.h>\ntypedef const char* velox_str;\n\n";
+
+    let mut declaration: i64 = cg_node(nodes, 0, 3);
+    while declaration >= 0 {
+        if cg_node(nodes, declaration, 0) == 2 {
+            result = str_concat(result, cg_struct(source, nodes, declaration));
+        }
+        declaration = cg_node(nodes, declaration, 7);
+    }
+
+    declaration = cg_node(nodes, 0, 3);
+    while declaration >= 0 {
+        if cg_node(nodes, declaration, 0) == 1 {
+            result = str_concat(result,
+                cg_function(source, nodes, declaration));
+        }
+        declaration = cg_node(nodes, declaration, 7);
+    }
+    return result;
+}

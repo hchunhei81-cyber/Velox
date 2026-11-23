@@ -1,61 +1,16 @@
 using "lexer.vx";
 using "ast.vx";
 using "parser.vx";
-
 using "types.vx";
+using "codegen.vx";
+using "driver.vx";
 
 fn main() {
-    let source: str =
-        "pub struct Point { x: i64, y: i64 } fn add(a: i64, b: i64) -> i64 { return a + b; } fn main() { let point: Point = Point(x: 10, y: 20,); let point2: Point = Point { x: 1, y: 2, }; let answer: i64 = add(20, 22); if answer > 0 { println(answer); } else { println(0); } while answer > 1 { let mut x: i64 = answer - 1; } for i in 0..10 { println(i); } }";
-
-    let tokens: i64 = tokenize(source);
-    let token_count: i64 = list_i64_len(tokens) / 3;
-
-    println("Velox Self-hosted Compiler");
-    println("Stage 1: Recursive-descent Parser");
-    println("Token count:");
-    println(token_count);
-
-    let nodes: i64 = parse_program(tokens);
-    println("Top-level declaration count:");
-    println(ast_node_count(nodes));
-    println("Total AST node count:");
-    println(ast_total_node_count(nodes));
-
-    let mut index: i64 = 0;
-    while index < ast_node_count(nodes) {
-        let kind: i64 = ast_node_kind(nodes, index);
-        if kind == 1 {
-            println("Function declaration");
-        } else {
-            if kind == 2 {
-                println("Struct declaration");
-            }
-        }
-        index = index + 1;
-    }
-
-    if ast_has_error(nodes) {
-        let error_pos: i64 = ast_error_position(nodes);
-        println("Parser verification: FAILED");
-        println("Failure token index:");
-        println(error_pos);
-        println("Failure token kind:");
-        println(list_i64_get(tokens, error_pos * 3));
-        println("Failure byte offset:");
-        println(list_i64_get(tokens, error_pos * 3 + 1));
-        return;
-    }
-
-    println("Parser verification: PASSED");
-
-    println("Stage 1: Type Checker");
-    if typecheck(source, nodes) {
-        println("Type checker verification: PASSED");
+    println("Velox Stage 1 Compiler");
+    if compile_file("/tmp/velox-multi/main.vx",
+                    "/tmp/velox-multi-output") {
+        println("COMPILATION PASSED");
     } else {
-        println("Type checker verification: FAILED");
-        println("Error byte position:");
-        println(typecheck_error_position());
-        return;
+        println("COMPILATION FAILED");
     }
 }

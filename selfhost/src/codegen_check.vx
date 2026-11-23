@@ -1,0 +1,32 @@
+using "lexer.vx";
+using "ast.vx";
+using "parser.vx";
+using "types.vx";
+using "codegen.vx";
+
+fn main() {
+    let source: str = "fn add(a: i64, b: i64) -> i64 { return a + b; } fn main() { println(add(20, 22)); }";
+    let tokens: i64 = tokenize(source);
+    let nodes: i64 = parse_program(tokens);
+
+    if ast_has_error(nodes) {
+        println("PARSER FAILED");
+        return;
+    }
+
+    let state: i64 = list_i64_new();
+    if !typecheck(state, source, nodes) {
+        println("TYPECHECK FAILED");
+        println(typecheck_error_position(state));
+        return;
+    }
+
+    let output: str = generate_c(source, nodes);
+    if str_len(output) == 0 {
+        println("CODEGEN FAILED");
+        return;
+    }
+
+    write_file("/tmp/velox-stage1-generated.c", output);
+    println("CODEGEN PASSED");
+}
