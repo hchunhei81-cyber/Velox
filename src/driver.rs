@@ -510,3 +510,75 @@ mod extern_merge_tests {
         assert_eq!(functions.len(), 1);
     }
 }
+
+
+#[cfg(test)]
+mod dependency_regression_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    fn test_dir() -> PathBuf {
+        static NEXT_ID: AtomicU64 = AtomicU64::new(0);
+
+        loop {
+            let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+            let dir = std::env::temp_dir().join(format!(
+                "velox-deps-test-{}-{}",
+                std::process::id(),
+                id
+            ));
+
+            match fs::create_dir(&dir) {
+                Ok(()) => return dir,
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(error) => panic!("failed to create test directory: {}", error),
+            }
+        }
+    }
+
+    #[test]
+    fn duplicate_dependencies_are_collected_once() {
+        let dir = test_dir();
+        let math = dir.join("math.vx");
+        let main = dir.join("main.vx");
+
+        fs::write(&math, "pub fn add(a: i64, b: i64) -> i64 { return a + b; }\n").unwrap();
+        fs::write(
+            &main,
+            "using \"math.vx\";\nusing \"math.vx\";\nfn main() {}\n",
+        ).unwrap();
+
+        let (files, _) = collect_files(
+            &main,
+            &mut HashSet::new(),
+            &mut HashSet::new(),
+        ).unwrap();
+
+        assert_eq!(files.len(), 2);
+        assert_eq!(files[0], math.canonicalize().unwrap());
+        assert_eq!(files[1], main.canonicalize().unwrap());
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn circular_dependencies_return_e0203() {
+        let dir = test_dir();
+        let a = dir.join("a.vx");
+        let b = dir.join("b.vx");
+
+        fs::write(&a, "using \"b.vx\";\nfn main() {}\n").unwrap();
+        fs::write(&b, "using \"a.vx\";\n").unwrap();
+
+        let result = collect_files(
+            &a,
+            &mut HashSet::new(),
+            &mut HashSet::new(),
+        );
+
+        let error = result.unwrap_err();
+        assert!(error.contains("E0203"), "unexpected error: {}", error);
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+}

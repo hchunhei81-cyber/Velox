@@ -586,7 +586,9 @@ fn p_parse_postfix(state: i64) -> i64 {
                     // Only a variable followed by '{' can start a
                     // brace-style struct initializer. Otherwise leave
                     // the brace for the enclosing block parser.
-                    if base_kind == 24 {
+                    if base_kind == 24 &&
+                       p_kind_at(state, 1) == 1 &&
+                       p_kind_at(state, 2) == 26 {
                         p_advance(state);
                         let args: i64 = p_parse_argument_list(state, 23, 1);
                         if list_i64_get(state, 3) > 0 { return -1; }

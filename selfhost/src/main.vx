@@ -7,8 +7,7 @@ using "driver.vx";
 
 fn main() {
     println("Velox Stage 1 Compiler");
-    if compile_file("/tmp/velox-multi/main.vx",
-                    "/tmp/velox-multi-output") {
+    if compile_file("selfhost/src/main.vx", "/tmp/velox-bootstrap/stage3") {
         println("COMPILATION PASSED");
     } else {
         println("COMPILATION FAILED");

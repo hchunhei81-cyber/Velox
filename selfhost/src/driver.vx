@@ -13,16 +13,50 @@ fn drv_contains(haystack: str, needle: str) -> bool {
     return false;
 }
 
-fn drv_expand(path: str, stack: str) -> str {
-    let marker: str = str_concat(
-        str_concat("|", path), "|"
-    );
+
+
+fn drv_state_contains(state: i64, needle: str) -> bool {
+    let n: i64 = str_len(needle);
+    let length: i64 = list_i64_len(state);
+    let mut i: i64 = 0;
+
+    while i + n <= length {
+        let mut j: i64 = 0;
+        let mut matched: bool = true;
+        while j < n {
+            if list_i64_get(state, i + j) < str_byte_at(needle, j) || list_i64_get(state, i + j) > str_byte_at(needle, j) {
+                matched = false;
+            }
+            j = j + 1;
+        }
+        if matched { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn drv_state_add(state: i64, marker: str) {
+    let mut i: i64 = 0;
+    while i < str_len(marker) {
+        list_i64_push(state, str_byte_at(marker, i));
+        i = i + 1;
+    }
+}
+
+fn drv_expand(path: str, stack: str, visited: i64) -> str {
+    let marker: str = str_concat(str_concat("|", path), "|");
 
     if drv_contains(stack, marker) {
         println("E0203: circular dependency");
         println(path);
         return "";
     }
+
+    if drv_state_contains(visited, marker) {
+        return "";
+    }
+
+    drv_state_add(visited, marker);
 
     let raw: str = read_file(path);
     if str_len(raw) == 0 {
@@ -48,11 +82,10 @@ fn drv_expand(path: str, stack: str) -> str {
 
     while pos < length {
         let line_start: i64 = pos;
-
-        while pos < length && (str_byte_at(raw, pos) < 10 || str_byte_at(raw, pos) > 10) {
+        while pos < length &&
+            (str_byte_at(raw, pos) < 10 || str_byte_at(raw, pos) > 10) {
             pos = pos + 1;
         }
-
         let line_end: i64 = pos;
         let mut trim_start: i64 = line_start;
 
@@ -63,15 +96,13 @@ fn drv_expand(path: str, stack: str) -> str {
         }
 
         let is_using: bool = line_end - trim_start >= 7 &&
-            str_eq(
-                str_slice(raw, trim_start, trim_start + 7),
-                "using \""
-            );
+            str_eq(str_slice(raw, trim_start, trim_start + 7), "using \"");
 
         if is_using {
             let mut dep_end: i64 = trim_start + 7;
             while dep_end < line_end &&
-                str_byte_at(raw, dep_end) < 34 {
+                (str_byte_at(raw, dep_end) < 34 ||
+                 str_byte_at(raw, dep_end) > 34) {
                 dep_end = dep_end + 1;
             }
 
@@ -82,19 +113,29 @@ fn drv_expand(path: str, stack: str) -> str {
 
             let dep: str = str_slice(raw, trim_start + 7, dep_end);
             let dep_path: str = str_concat(dir, dep);
-            let expanded: str = drv_expand(dep_path, next_stack);
+        let dep_marker: str =
+                str_concat(str_concat("|", dep_path), "|");
 
-            if str_len(expanded) == 0 {
+            if drv_contains(next_stack, dep_marker) {
+                println("E0203: circular dependency");
+                println(dep_path);
                 return "";
             }
 
-            result = str_concat(result, expanded);
-            result = str_concat(result, "\n");
+            if drv_state_contains(visited, dep_marker) == false {
+                let expanded: str =
+                    drv_expand(dep_path, next_stack, visited);
+
+                if str_len(expanded) == 0 {
+                    return "";
+                }
+
+                result = str_concat(result, expanded);
+                result = str_concat(result, "\n");
+            }
         } else {
-            result = str_concat(
-                result,
-                str_slice(raw, line_start, line_end)
-            );
+            result = str_concat(result,
+                str_slice(raw, line_start, line_end));
             result = str_concat(result, "\n");
         }
 
@@ -183,7 +224,7 @@ pub fn compile_source(source: str, output_path: str) -> bool {
 }
 
 pub fn compile_file(input_path: str, output_path: str) -> bool {
-    let expanded: str = drv_expand(input_path, "|");
+    let expanded: str = drv_expand(input_path, "|", list_i64_new());
 
     if str_len(expanded) == 0 {
         println("E1005: dependency expansion failed");

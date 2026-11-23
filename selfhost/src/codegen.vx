@@ -61,7 +61,82 @@ fn cg_operator(op: i64) -> str {
     return "/* unsupported operator */";
 }
 
-fn cg_expr(source: str, nodes: i64, node: i64) -> str {
+fn cg_is_string_param(source: str, nodes: i64,
+                       params: i64, node: i64) -> bool {
+    if node < 0 || cg_node(nodes, node, 0) < 24 || cg_node(nodes, node, 0) > 24 {
+        return false;
+    }
+
+    let variable_name: str = cg_slice(source,
+        cg_node(nodes, node, 1), cg_node(nodes, node, 2));
+
+    let mut param: i64 = params;
+    while param >= 0 {
+        let param_name: str = cg_slice(source,
+            cg_node(nodes, param, 1), cg_node(nodes, param, 2));
+
+        if str_eq(variable_name, param_name) {
+            let type_node: i64 = cg_node(nodes, param, 3);
+            let type_name: str = cg_slice(source,
+                cg_node(nodes, type_node, 1),
+                cg_node(nodes, type_node, 2));
+            return str_eq(type_name, "str");
+        }
+
+        param = cg_node(nodes, param, 7);
+    }
+    return false;
+}
+
+
+fn cg_is_string_local(source: str, nodes: i64,
+                      body: i64, node: i64) -> bool {
+    if node < 0 || (cg_node(nodes, node, 0) < 24 || cg_node(nodes, node, 0) > 24) {
+        return false;
+    }
+
+    let variable_name: str = cg_slice(source,
+        cg_node(nodes, node, 1), cg_node(nodes, node, 2));
+
+    let mut statement: i64 = cg_node(nodes, body, 3);
+
+    while statement >= 0 {
+        if cg_node(nodes, statement, 0) == 6 {
+            let name_start: i64 = cg_node(nodes, statement, 6);
+            let mut name_end: i64 = name_start;
+
+            while name_end < str_len(source) &&
+                  ((str_byte_at(source, name_end) >= 48 &&
+                    str_byte_at(source, name_end) <= 57) ||
+                   (str_byte_at(source, name_end) >= 65 &&
+                    str_byte_at(source, name_end) <= 90) ||
+                   (str_byte_at(source, name_end) >= 97 &&
+                    str_byte_at(source, name_end) <= 122) ||
+                    str_byte_at(source, name_end) == 95) {
+                name_end = name_end + 1;
+            }
+
+            let local_name: str = cg_slice(source, name_start, name_end);
+
+            if str_eq(variable_name, local_name) {
+                let type_node: i64 = cg_node(nodes, statement, 4);
+                if type_node < 0 { return false; }
+
+                let type_name: str = cg_slice(source,
+                    cg_node(nodes, type_node, 1),
+                    cg_node(nodes, type_node, 2));
+
+                return str_eq(type_name, "str");
+            }
+        }
+
+        statement = cg_node(nodes, statement, 7);
+    }
+
+    return false;
+}
+
+fn cg_expr(source: str, nodes: i64, node: i64, params: i64, body: i64) -> str {
     if node < 0 { return "0"; }
 
     let kind: i64 = cg_node(nodes, node, 0);
@@ -72,30 +147,30 @@ fn cg_expr(source: str, nodes: i64, node: i64) -> str {
         return cg_slice(source, start, end);
     }
     if kind == 23 {
-        if cg_node(nodes, node, 3) == 1 { return "true"; }
-        return "false";
+        if cg_node(nodes, node, 3) == 1 { return "false"; }
+        return "true";
     }
     if kind == 24 {
         return cg_mangle("vxv_", cg_slice(source, start, end));
     }
     if kind == 25 {
         return str_concat("(-", str_concat(
-            cg_expr(source, nodes, cg_node(nodes, node, 3)), ")"));
+            cg_expr(source, nodes, cg_node(nodes, node, 3), params, body), ")"));
     }
     if kind == 26 {
         return str_concat("(!", str_concat(
-            cg_expr(source, nodes, cg_node(nodes, node, 3)), ")"));
+            cg_expr(source, nodes, cg_node(nodes, node, 3), params, body), ")"));
     }
     if kind == 27 {
         let op: str = cg_operator(cg_node(nodes, node, 3));
-        let left: str = cg_expr(source, nodes, cg_node(nodes, node, 4));
-        let right: str = cg_expr(source, nodes, cg_node(nodes, node, 5));
+        let left: str = cg_expr(source, nodes, cg_node(nodes, node, 4), params, body);
+        let right: str = cg_expr(source, nodes, cg_node(nodes, node, 5), params, body);
         return str_concat("(", str_concat(left,
             str_concat(" ", str_concat(op,
                 str_concat(" ", str_concat(right, ")"))))));
     }
     if kind == 29 {
-        let base: str = cg_expr(source, nodes, cg_node(nodes, node, 3));
+        let base: str = cg_expr(source, nodes, cg_node(nodes, node, 3), params, body);
         let mut field: str = cg_slice(source,
             cg_node(nodes, node, 4), cg_node(nodes, node, 5));
         return str_concat("(", str_concat(base,
@@ -112,9 +187,9 @@ fn cg_expr(source: str, nodes: i64, node: i64) -> str {
 
         if str_eq(name, "print") || str_eq(name, "println") {
             if current < 0 { return "((void)0)"; }
-            let value: str = cg_expr(source, nodes, current);
+            let value: str = cg_expr(source, nodes, current, params, body);
             let value_kind: i64 = cg_node(nodes, current, 0);
-            if value_kind == 22 {
+            if value_kind == 22 || cg_is_string_param(source, nodes, params, current) || cg_is_string_local(source, nodes, body, current) {
                 return str_concat("printf(\"%s\\n\", ", str_concat(value, ")"));
             }
             if value_kind == 23 {
@@ -125,11 +200,31 @@ fn cg_expr(source: str, nodes: i64, node: i64) -> str {
                 str_concat(value, "))"));
         }
 
-        result = cg_mangle("vxf_", name);
-        result = str_concat(result, "(");
+        if str_eq(name, "list_i64_new") {
+            return "velox_list_i64_new()";
+        }
+
+        let mut target: str = "";
+        if str_eq(name, "read_file") { target = "velox_read_file"; }
+        if str_eq(name, "write_file") { target = "velox_write_file"; }
+        if str_eq(name, "str_len") { target = "velox_str_len"; }
+        if str_eq(name, "str_byte_at") { target = "velox_str_byte_at"; }
+        if str_eq(name, "str_byte_at_fast") { target = "velox_str_byte_at_fast"; }
+        if str_eq(name, "str_slice") { target = "velox_str_slice"; }
+        if str_eq(name, "str_concat") { target = "velox_str_concat"; }
+        if str_eq(name, "str_eq") { target = "velox_str_eq"; }
+        if str_eq(name, "list_i64_push") { target = "velox_list_i64_push"; }
+        if str_eq(name, "list_i64_get") { target = "velox_list_i64_get"; }
+        if str_eq(name, "list_i64_set") { target = "velox_list_i64_set"; }
+        if str_eq(name, "list_i64_len") { target = "velox_list_i64_len"; }
+
+        if str_eq(target, "") {
+            target = cg_mangle("vxf_", name);
+        }
+        result = str_concat(target, "(");
         while current >= 0 {
             if first == 0 { result = str_concat(result, ", "); }
-            result = str_concat(result, cg_expr(source, nodes, current));
+            result = str_concat(result, cg_expr(source, nodes, current, params, body));
             first = 0;
             current = cg_node(nodes, current, 7);
         }
@@ -152,7 +247,7 @@ fn cg_expr(source: str, nodes: i64, node: i64) -> str {
             result = str_concat(result, str_concat(".",
                 str_concat(cg_mangle("vxm_", field), " = ")));
             result = str_concat(result,
-                cg_expr(source, nodes, cg_node(nodes, current, 5)));
+                cg_expr(source, nodes, cg_node(nodes, current, 5), params, body));
             first = 0;
             current = cg_node(nodes, current, 7);
         }
@@ -161,18 +256,18 @@ fn cg_expr(source: str, nodes: i64, node: i64) -> str {
     return "0";
 }
 
-fn cg_block(source: str, nodes: i64, block: i64) -> str {
+fn cg_block(source: str, nodes: i64, block: i64, params: i64, body: i64) -> str {
     let mut result: str = "{\n";
     let mut statement: i64 = cg_node(nodes, block, 3);
 
     while statement >= 0 {
-        result = str_concat(result, cg_stmt(source, nodes, statement));
+        result = str_concat(result, cg_stmt(source, nodes, statement, params, body));
         statement = cg_node(nodes, statement, 7);
     }
     return str_concat(result, "}\n");
 }
 
-fn cg_stmt(source: str, nodes: i64, node: i64) -> str {
+fn cg_stmt(source: str, nodes: i64, node: i64, params: i64, body: i64) -> str {
     let kind: i64 = cg_node(nodes, node, 0);
 
     if kind == 6 {
@@ -200,52 +295,52 @@ fn cg_stmt(source: str, nodes: i64, node: i64) -> str {
         return str_concat("    ", str_concat(ty,
             str_concat(" ", str_concat(name,
                 str_concat(" = ", str_concat(
-                    cg_expr(source, nodes, init), ";\n"))))));
+                    cg_expr(source, nodes, init, params, body), ";\n"))))));
     }
     if kind == 7 {
         return str_concat("    ",
-            str_concat(cg_expr(source, nodes, cg_node(nodes, node, 3)),
+            str_concat(cg_expr(source, nodes, cg_node(nodes, node, 3), params, body),
                 str_concat(" = ", str_concat(
-                    cg_expr(source, nodes, cg_node(nodes, node, 4)), ";\n"))));
+                    cg_expr(source, nodes, cg_node(nodes, node, 4), params, body), ";\n"))));
     }
     if kind == 8 {
         return str_concat("    ",
-            str_concat(cg_expr(source, nodes, cg_node(nodes, node, 3)),
+            str_concat(cg_expr(source, nodes, cg_node(nodes, node, 3), params, body),
                 str_concat(" = ", str_concat(
-                    cg_expr(source, nodes, cg_node(nodes, node, 4)), ";\n"))));
+                    cg_expr(source, nodes, cg_node(nodes, node, 4), params, body), ";\n"))));
     }
     if kind == 9 {
         let value: i64 = cg_node(nodes, node, 3);
         if value < 0 { return "    return;\n"; }
         return str_concat("    return ",
-            str_concat(cg_expr(source, nodes, value), ";\n"));
+            str_concat(cg_expr(source, nodes, value, params, body), ";\n"));
     }
     if kind == 10 {
-        let condition: str = cg_expr(source, nodes, cg_node(nodes, node, 3));
-        let then_code: str = cg_block(source, nodes, cg_node(nodes, node, 4));
+        let condition: str = cg_expr(source, nodes, cg_node(nodes, node, 3), params, body);
+        let then_code: str = cg_block(source, nodes, cg_node(nodes, node, 4), params, body);
         let otherwise: i64 = cg_node(nodes, node, 5);
         let mut result: str = str_concat("    if (", str_concat(condition,
             str_concat(") ", then_code)));
         if otherwise >= 0 {
             if cg_node(nodes, otherwise, 0) == 5 {
                 result = str_concat(result, str_concat("else ",
-                    cg_block(source, nodes, otherwise)));
+                    cg_block(source, nodes, otherwise, params, body)));
             } else {
-                result = str_concat(result, cg_stmt(source, nodes, otherwise));
+                result = str_concat(result, cg_stmt(source, nodes, otherwise, params, body));
             }
         }
         return result;
     }
     if kind == 11 {
         return str_concat("    while (",
-            str_concat(cg_expr(source, nodes, cg_node(nodes, node, 3)),
+            str_concat(cg_expr(source, nodes, cg_node(nodes, node, 3), params, body),
                 str_concat(") ",
-                    cg_block(source, nodes, cg_node(nodes, node, 4)))));
+                    cg_block(source, nodes, cg_node(nodes, node, 4), params, body))));
     }
     if kind == 12 {
-        let from: str = cg_expr(source, nodes, cg_node(nodes, node, 3));
-        let to: str = cg_expr(source, nodes, cg_node(nodes, node, 4));
-        let body: str = cg_block(source, nodes, cg_node(nodes, node, 5));
+        let from: str = cg_expr(source, nodes, cg_node(nodes, node, 3), params, body);
+        let to: str = cg_expr(source, nodes, cg_node(nodes, node, 4), params, body);
+        let loop_body: str = cg_block(source, nodes, cg_node(nodes, node, 5), params, body);
         let name_start: i64 = cg_node(nodes, node, 6);
         let mut name_end: i64 = name_start;
         while name_end < str_len(source) &&
@@ -271,13 +366,199 @@ fn cg_stmt(source: str, nodes: i64, node: i64) -> str {
         loop_head = str_concat(loop_head, "; ");
         loop_head = str_concat(loop_head, name);
         loop_head = str_concat(loop_head, "++) ");
-        return str_concat(loop_head, body);
+        return str_concat(loop_head, loop_body);
     }
     if kind == 14 {
         return str_concat("    ",
-            str_concat(cg_expr(source, nodes, cg_node(nodes, node, 3)), ";\n"));
+            str_concat(cg_expr(source, nodes, cg_node(nodes, node, 3), params, body), ";\n"));
     }
     return "";
+}
+
+
+fn cg_runtime() -> str {
+    let mut result: str = "";
+    result = str_concat(result, "\n");
+    result = str_concat(result, "#include <string.h>\n");
+    result = str_concat(result, "\n");
+    result = str_concat(result, "static void velox_runtime_fail(const char *message) {\n");
+    result = str_concat(result, "    fprintf(stderr, \"Velox runtime error: %s\\n\", message);\n");
+    result = str_concat(result, "    exit(EXIT_FAILURE);\n");
+    result = str_concat(result, "}\n");
+    result = str_concat(result, "\n");
+    result = str_concat(result, "static velox_str velox_read_file(velox_str path) {\n");
+    result = str_concat(result, "    FILE *file = fopen(path, \"rb\");\n");
+    result = str_concat(result, "    if (!file) velox_runtime_fail(\"cannot open file for reading\");\n");
+    result = str_concat(result, "    if (fseek(file, 0, SEEK_END) != 0)\n");
+    result = str_concat(result, "        velox_runtime_fail(\"cannot seek input file\");\n");
+    result = str_concat(result, "    long size = ftell(file);\n");
+    result = str_concat(result, "    if (size < 0) velox_runtime_fail(\"cannot determine input file size\");\n");
+    result = str_concat(result, "    if (fseek(file, 0, SEEK_SET) != 0)\n");
+    result = str_concat(result, "        velox_runtime_fail(\"cannot rewind input file\");\n");
+    result = str_concat(result, "\n");
+    result = str_concat(result, "    char *buffer = (char *)malloc((size_t)size + 1);\n");
+    result = str_concat(result, "    if (!buffer) velox_runtime_fail(\"out of memory reading file\");\n");
+    result = str_concat(result, "    size_t count = fread(buffer, 1, (size_t)size, file);\n");
+    result = str_concat(result, "    bool failed = count != (size_t)size || ferror(file);\n");
+    result = str_concat(result, "    fclose(file);\n");
+    result = str_concat(result, "    if (failed) velox_runtime_fail(\"failed to read input file\");\n");
+    result = str_concat(result, "    if (memchr(buffer, '\\0', count))\n");
+    result = str_concat(result, "        velox_runtime_fail(\"input file contains an embedded NUL byte\");\n");
+    result = str_concat(result, "    buffer[count] = '\\0';\n");
+    result = str_concat(result, "    return buffer;\n");
+    result = str_concat(result, "}\n");
+    result = str_concat(result, "\n");
+    result = str_concat(result, "static bool velox_write_file(velox_str path, velox_str content) {\n");
+    result = str_concat(result, "    FILE *file = fopen(path, \"wb\");\n");
+    result = str_concat(result, "    if (!file) return false;\n");
+    result = str_concat(result, "    size_t length = strlen(content);\n");
+    result = str_concat(result, "    size_t written = fwrite(content, 1, length, file);\n");
+    result = str_concat(result, "    int close_result = fclose(file);\n");
+    result = str_concat(result, "    return written == length && close_result == 0;\n");
+    result = str_concat(result, "}\n");
+    result = str_concat(result, "\n");
+    result = str_concat(result, "static int64_t velox_str_len(velox_str value) {\n");
+    result = str_concat(result, "    return (int64_t)strlen(value);\n");
+    result = str_concat(result, "}\n");
+    result = str_concat(result, "\n");
+    result = str_concat(result, "static int64_t velox_str_byte_at(velox_str value, int64_t index) {\n");
+    result = str_concat(result, "    size_t length = strlen(value);\n");
+    result = str_concat(result, "    if (index < 0 || (uint64_t)index >= length)\n");
+    result = str_concat(result, "        velox_runtime_fail(\"string byte index out of bounds\");\n");
+    result = str_concat(result, "    return (int64_t)(unsigned char)value[index];\n");
+    result = str_concat(result, "}\n");
+    result = str_concat(result, "\n");
+    result = str_concat(result, "static int64_t velox_str_byte_at_fast(velox_str value, int64_t index, int64_t length) {\n");
+    result = str_concat(result, "    if (index < 0 || length < 0 || index >= length)\n");
+    result = str_concat(result, "        velox_runtime_fail(\"string byte index out of bounds\");\n");
+    result = str_concat(result, "    return (int64_t)(unsigned char)value[index];\n");
+    result = str_concat(result, "}\n");
+    result = str_concat(result, "\n");
+    result = str_concat(result, "static velox_str velox_str_slice(velox_str value, int64_t start, int64_t end) {\n");
+    result = str_concat(result, "    size_t length = strlen(value);\n");
+    result = str_concat(result, "    if (start < 0 || end < start || (uint64_t)end > length)\n");
+    result = str_concat(result, "        velox_runtime_fail(\"invalid string slice bounds\");\n");
+    result = str_concat(result, "    size_t count = (size_t)(end - start);\n");
+    result = str_concat(result, "    char *result = (char *)malloc(count + 1);\n");
+    result = str_concat(result, "    if (!result) velox_runtime_fail(\"out of memory slicing string\");\n");
+    result = str_concat(result, "    memcpy(result, value + start, count);\n");
+    result = str_concat(result, "    result[count] = '\\0';\n");
+    result = str_concat(result, "    return result;\n");
+    result = str_concat(result, "}\n");
+    result = str_concat(result, "\n");
+    result = str_concat(result, "static velox_str velox_str_concat(velox_str left, velox_str right) {\n");
+    result = str_concat(result, "    size_t a = strlen(left), b = strlen(right);\n");
+    result = str_concat(result, "    if (a > SIZE_MAX - b - 1)\n");
+    result = str_concat(result, "        velox_runtime_fail(\"string concatenation size overflow\");\n");
+    result = str_concat(result, "    char *result = (char *)malloc(a + b + 1);\n");
+    result = str_concat(result, "    if (!result) velox_runtime_fail(\"out of memory concatenating strings\");\n");
+    result = str_concat(result, "    memcpy(result, left, a);\n");
+    result = str_concat(result, "    memcpy(result + a, right, b + 1);\n");
+    result = str_concat(result, "    return result;\n");
+    result = str_concat(result, "}\n");
+    result = str_concat(result, "\n");
+    result = str_concat(result, "static bool velox_str_eq(velox_str left, velox_str right) {\n");
+    result = str_concat(result, "    return strcmp(left, right) == 0;\n");
+    result = str_concat(result, "}\n");
+    result = str_concat(result, "\n");
+    result = str_concat(result, "typedef struct {\n");
+    result = str_concat(result, "    int64_t *data;\n");
+    result = str_concat(result, "    size_t len;\n");
+    result = str_concat(result, "    size_t cap;\n");
+    result = str_concat(result, "} velox_i64_list;\n");
+    result = str_concat(result, "\n");
+    result = str_concat(result, "static velox_i64_list *velox_get_i64_list(int64_t handle) {\n");
+    result = str_concat(result, "    velox_i64_list *list = (velox_i64_list *)(intptr_t)handle;\n");
+    result = str_concat(result, "    if (!list) velox_runtime_fail(\"invalid integer list handle\");\n");
+    result = str_concat(result, "    return list;\n");
+    result = str_concat(result, "}\n");
+    result = str_concat(result, "\n");
+    result = str_concat(result, "static int64_t velox_list_i64_new(void) {\n");
+    result = str_concat(result, "    velox_i64_list *list = (velox_i64_list *)calloc(1, sizeof(*list));\n");
+    result = str_concat(result, "    if (!list) velox_runtime_fail(\"out of memory creating integer list\");\n");
+    result = str_concat(result, "    return (int64_t)(intptr_t)list;\n");
+    result = str_concat(result, "}\n");
+    result = str_concat(result, "\n");
+    result = str_concat(result, "static void velox_list_i64_push(int64_t handle, int64_t value) {\n");
+    result = str_concat(result, "    velox_i64_list *list = velox_get_i64_list(handle);\n");
+    result = str_concat(result, "    if (list->len == list->cap) {\n");
+    result = str_concat(result, "        size_t next = list->cap ? list->cap * 2 : 8;\n");
+    result = str_concat(result, "        if (next < list->cap || next > SIZE_MAX / sizeof(int64_t))\n");
+    result = str_concat(result, "            velox_runtime_fail(\"integer list capacity overflow\");\n");
+    result = str_concat(result, "        int64_t *data = (int64_t *)realloc(list->data, next * sizeof(int64_t));\n");
+    result = str_concat(result, "        if (!data) velox_runtime_fail(\"out of memory growing integer list\");\n");
+    result = str_concat(result, "        list->data = data;\n");
+    result = str_concat(result, "        list->cap = next;\n");
+    result = str_concat(result, "    }\n");
+    result = str_concat(result, "    list->data[list->len++] = value;\n");
+    result = str_concat(result, "}\n");
+    result = str_concat(result, "\n");
+    result = str_concat(result, "static int64_t velox_list_i64_get(int64_t handle, int64_t index) {\n");
+    result = str_concat(result, "    velox_i64_list *list = velox_get_i64_list(handle);\n");
+    result = str_concat(result, "    if (index < 0 || (uint64_t)index >= list->len)\n");
+    result = str_concat(result, "        velox_runtime_fail(\"integer list index out of bounds\");\n");
+    result = str_concat(result, "    return list->data[index];\n");
+    result = str_concat(result, "}\n");
+    result = str_concat(result, "\n");
+    result = str_concat(result, "static void velox_list_i64_set(int64_t handle, int64_t index, int64_t value) {\n");
+    result = str_concat(result, "    velox_i64_list *list = velox_get_i64_list(handle);\n");
+    result = str_concat(result, "    if (index < 0 || (uint64_t)index >= list->len)\n");
+    result = str_concat(result, "        velox_runtime_fail(\"integer list index out of bounds\");\n");
+    result = str_concat(result, "    list->data[index] = value;\n");
+    result = str_concat(result, "}\n");
+    result = str_concat(result, "\n");
+    result = str_concat(result, "static int64_t velox_list_i64_len(int64_t handle) {\n");
+    result = str_concat(result, "    velox_i64_list *list = velox_get_i64_list(handle);\n");
+    result = str_concat(result, "    if (list->len > INT64_MAX)\n");
+    result = str_concat(result, "        velox_runtime_fail(\"integer list length overflow\");\n");
+    result = str_concat(result, "    return (int64_t)list->len;\n");
+    result = str_concat(result, "}\n");
+    result = str_concat(result, "\n");
+    result = str_concat(result, "static void velox_i64_fail(const char *operation) {\n");
+    result = str_concat(result, "    fprintf(stderr, \"Velox runtime error: %s\\n\", operation);\n");
+    result = str_concat(result, "    exit(EXIT_FAILURE);\n");
+    result = str_concat(result, "}\n");
+    result = str_concat(result, "\n");
+    result = str_concat(result, "static int64_t velox_i64_add(int64_t a, int64_t b) {\n");
+    result = str_concat(result, "    int64_t result;\n");
+    result = str_concat(result, "    if (__builtin_add_overflow(a, b, &result))\n");
+    result = str_concat(result, "        velox_i64_fail(\"i64 addition overflow\");\n");
+    result = str_concat(result, "    return result;\n");
+    result = str_concat(result, "}\n");
+    result = str_concat(result, "\n");
+    result = str_concat(result, "static int64_t velox_i64_sub(int64_t a, int64_t b) {\n");
+    result = str_concat(result, "    int64_t result;\n");
+    result = str_concat(result, "    if (__builtin_sub_overflow(a, b, &result))\n");
+    result = str_concat(result, "        velox_i64_fail(\"i64 subtraction overflow\");\n");
+    result = str_concat(result, "    return result;\n");
+    result = str_concat(result, "}\n");
+    result = str_concat(result, "\n");
+    result = str_concat(result, "static int64_t velox_i64_mul(int64_t a, int64_t b) {\n");
+    result = str_concat(result, "    int64_t result;\n");
+    result = str_concat(result, "    if (__builtin_mul_overflow(a, b, &result))\n");
+    result = str_concat(result, "        velox_i64_fail(\"i64 multiplication overflow\");\n");
+    result = str_concat(result, "    return result;\n");
+    result = str_concat(result, "}\n");
+    result = str_concat(result, "\n");
+    result = str_concat(result, "static int64_t velox_i64_div(int64_t a, int64_t b) {\n");
+    result = str_concat(result, "    if (b == 0) velox_i64_fail(\"i64 division by zero\");\n");
+    result = str_concat(result, "    if (a == INT64_MIN && b == -1)\n");
+    result = str_concat(result, "        velox_i64_fail(\"i64 division overflow\");\n");
+    result = str_concat(result, "    return a / b;\n");
+    result = str_concat(result, "}\n");
+    result = str_concat(result, "\n");
+    result = str_concat(result, "static int64_t velox_i64_mod(int64_t a, int64_t b) {\n");
+    result = str_concat(result, "    if (b == 0) velox_i64_fail(\"i64 modulo by zero\");\n");
+    result = str_concat(result, "    if (a == INT64_MIN && b == -1) return 0;\n");
+    result = str_concat(result, "    return a % b;\n");
+    result = str_concat(result, "}\n");
+    result = str_concat(result, "\n");
+    result = str_concat(result, "static int64_t velox_i64_neg(int64_t a) {\n");
+    result = str_concat(result, "    if (a == INT64_MIN) velox_i64_fail(\"i64 negation overflow\");\n");
+    result = str_concat(result, "    return -a;\n");
+    result = str_concat(result, "}\n");
+    result = str_concat(result, "\n");
+    return result;
 }
 
 fn cg_function(source: str, nodes: i64, function: i64) -> str {
@@ -311,7 +592,7 @@ fn cg_function(source: str, nodes: i64, function: i64) -> str {
     }
     if first == 1 { result = str_concat(result, "void"); }
     result = str_concat(result, ") ");
-    result = str_concat(result, cg_block(source, nodes, body));
+    result = str_concat(result, cg_block(source, nodes, body, params, body));
     if str_eq(name, "main") {
         result = str_concat(result, "\n");
     }
@@ -337,11 +618,44 @@ fn cg_struct(source: str, nodes: i64, structure: i64) -> str {
         str_concat(cg_mangle("vxt_", name), ";\n\n")));
 }
 
+
+fn cg_function_decl(source: str, nodes: i64, function: i64) -> str {
+    let name_node: i64 = cg_node(nodes, function, 4);
+    let meta: i64 = cg_node(nodes, function, 5);
+    let name: str = cg_slice(source,
+        cg_node(nodes, name_node, 1), cg_node(nodes, name_node, 2));
+
+    if str_eq(name, "main") { return ""; }
+
+    let params: i64 = cg_node(nodes, meta, 3);
+    let ret: i64 = cg_node(nodes, meta, 4);
+    let mut result: str = str_concat(cg_type(source, nodes, ret),
+        str_concat(" ", str_concat(cg_mangle("vxf_", name), "(")));
+
+    let mut current: i64 = params;
+    let mut first: i64 = 1;
+    while current >= 0 {
+        if first == 0 { result = str_concat(result, ", "); }
+        let ptype: str = cg_type(source, nodes, cg_node(nodes, current, 3));
+        let pname: str = cg_slice(source,
+            cg_node(nodes, current, 1), cg_node(nodes, current, 2));
+        result = str_concat(result, str_concat(ptype,
+            str_concat(" ", cg_mangle("vxv_", pname))));
+        first = 0;
+        current = cg_node(nodes, current, 7);
+    }
+    if first == 1 { result = str_concat(result, "void"); }
+    return str_concat(result, ");\n");
+}
+
 pub fn generate_c(source: str, nodes: i64) -> str {
     if ast_has_error(nodes) { return ""; }
 
     let mut result: str =
         "#include <stdio.h>\n#include <stdint.h>\n#include <stdbool.h>\n#include <stdlib.h>\n#include <string.h>\ntypedef const char* velox_str;\n\n";
+    result = str_concat(result, cg_runtime());
+    result = str_concat(result, "\n");
+
 
     let mut declaration: i64 = cg_node(nodes, 0, 3);
     while declaration >= 0 {
@@ -350,6 +664,17 @@ pub fn generate_c(source: str, nodes: i64) -> str {
         }
         declaration = cg_node(nodes, declaration, 7);
     }
+
+    declaration = cg_node(nodes, 0, 3);
+    while declaration >= 0 {
+        if cg_node(nodes, declaration, 0) == 1 {
+            result = str_concat(result,
+                cg_function_decl(source, nodes, declaration));
+        }
+        declaration = cg_node(nodes, declaration, 7);
+    }
+
+    result = str_concat(result, "\n");
 
     declaration = cg_node(nodes, 0, 3);
     while declaration >= 0 {

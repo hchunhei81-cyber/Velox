@@ -1,0 +1,15 @@
+using "lexer.vx";
+using "ast.vx";
+using "parser.vx";
+using "types.vx";
+using "codegen.vx";
+using "driver.vx";
+
+fn main() {
+    println("Velox Bootstrap");
+    if compile_file("selfhost/src/main.vx", "/tmp/velox-bootstrap/stage2") {
+        println("BOOTSTRAP PASS");
+    } else {
+        println("BOOTSTRAP FAIL");
+    }
+}
