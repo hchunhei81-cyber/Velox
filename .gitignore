@@ -61,7 +61,3 @@ veloxc
 # Selfhost local executable
 /selfhost/src/main
 
-# html files
-*.html
-*.css
-main.js

@@ -1,0 +1,445 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#080a09">
+  <meta name="description" content="Velox language tutorial — syntax, types, compiler workflow and bootstrap.">
+  <title>Velox · Language Tutorial</title>
+  <link rel="stylesheet" href="tutorial.css">
+  <script src="tutorial.js" defer></script>
+</head>
+<body>
+  <div class="site-shell">
+    <header class="topbar">
+      <a class="brand" href="#top" aria-label="Velox home">
+        <span class="brand-mark">V</span>
+        <span>VELOX<span class="brand-sub">LANGUAGE GUIDE</span></span>
+      </a>
+      <div class="top-actions">
+        <span class="version-chip">STAGE 1 / SELF-HOSTING</span>
+        <button class="lang-toggle" id="langToggle" type="button" aria-label="Switch language">EN</button>
+      </div>
+    </header>
+
+    <div class="layout" id="top">
+      <aside class="sidebar" id="sidebar">
+        <div class="side-label" data-i18n="contents">目录 / CONTENTS</div>
+        <nav id="toc">
+          <a href="#intro" data-i18n="navIntro">介绍</a>
+          <a href="#quickstart" data-i18n="navQuick">快速开始</a>
+          <a href="#format" data-i18n="navFormat">文件格式</a>
+          <a href="#syntax" data-i18n="navSyntax">基础语法</a>
+          <a href="#types" data-i18n="navTypes">类型系统</a>
+          <a href="#control" data-i18n="navControl">流程控制</a>
+          <a href="#functions" data-i18n="navFunctions">函数</a>
+          <a href="#structs" data-i18n="navStructs">结构体</a>
+          <a href="#modules" data-i18n="navModules">模块与依赖</a>
+          <a href="#keywords" data-i18n="navKeywords">关键字</a>
+          <a href="#operators" data-i18n="navOperators">运算符</a>
+          <a href="#compiler" data-i18n="navCompiler">编译器工作流</a>
+          <a href="#bootstrap" data-i18n="navBootstrap">自举</a>
+          <a href="#errors" data-i18n="navErrors">错误排查</a>
+          <a href="#reference" data-i18n="navReference">参考示例</a>
+        </nav>
+        <div class="sidebar-note">
+          <span class="green-dot"></span>
+          <span data-i18n="sideNote">以当前仓库实现为准；尚未实现的语言特性不会在此假定存在。</span>
+        </div>
+      </aside>
+
+      <main class="content">
+        <section class="hero">
+          <div class="eyebrow"><span class="green-dot"></span><span data-i18n="heroEyebrow">THE VELOX PROGRAMMING LANGUAGE</span></div>
+          <h1 data-i18n="heroTitle">简单如 Python，安全如 Rust，快速如 C。</h1>
+          <p class="hero-copy" data-i18n="heroCopy">从第一段 .vx 程序开始，了解 Velox 的文件格式、语法、类型、编译流程，以及 Stage 1 自举编译器。</p>
+          <div class="hero-meta">
+            <span data-i18n="metaOne">双语指南 · 中文 / English</span>
+            <span class="meta-sep">/</span>
+            <span data-i18n="metaTwo">面向当前仓库实现</span>
+            <span class="meta-sep">/</span>
+            <span>Rust → VX → C</span>
+          </div>
+        </section>
+
+        <div class="notice">
+          <strong data-i18n="accuracyTitle">实现状态说明</strong>
+          <p data-i18n="accuracyText">本指南描述当前项目中已经出现并经过测试的语法与命令。Velox 仍在开发中；不要把本指南理解为完整的 Rust、Python 或 C 替代品。具体可用特性以当前编译器和测试为准。</p>
+        </div>
+
+        <section class="doc-section" id="intro">
+          <div class="section-kicker">01 / OVERVIEW</div>
+          <h2 data-i18n="introTitle">认识 Velox</h2>
+          <p data-i18n="introP">Velox 是一门正在自举（self-hosting）过程中的编程语言。当前工程采用 Rust 编写 Stage 0 编译器，再由 Velox 编写 Stage 1 编译器，并通过 C 代码生成与本机 C 编译器构建后续阶段。</p>
+          <div class="three-grid">
+            <article class="info-card">
+              <span class="card-index">01</span><h3>Readable</h3>
+              <p data-i18n="introCard1">采用显式函数、类型注解、代码块和直观的控制流程。</p>
+            </article>
+            <article class="info-card">
+              <span class="card-index">02</span><h3>Typed</h3>
+              <p data-i18n="introCard2">具有 i64、f64、bool、str、void 与结构体类型等基础类型。</p>
+            </article>
+            <article class="info-card">
+              <span class="card-index">03</span><h3>Native</h3>
+              <p data-i18n="introCard3">当前后端将 Velox 程序转换为 C，再调用 clang 等 C 编译器生成本机可执行文件。</p>
+            </article>
+          </div>
+        </section>
+
+        <section class="doc-section" id="quickstart">
+          <div class="section-kicker">02 / QUICK START</div>
+          <h2 data-i18n="quickTitle">快速开始</h2>
+          <p data-i18n="quickP">在仓库根目录执行以下命令。由于工程包含多个 Cargo binary，调用编译器时请明确指定 <code>--bin veloxc</code>。</p>
+          <h3 data-i18n="prereqTitle">环境要求</h3>
+          <ul>
+            <li data-i18n="prereq1">Rust 工具链与 Cargo：构建 Stage 0 编译器。</li>
+            <li data-i18n="prereq2">C 编译器（例如 clang）：将生成的 C 源码编译为本机程序。</li>
+            <li data-i18n="prereq3">终端：在仓库根目录运行命令。</li>
+          </ul>
+          <div class="code-card">
+            <div class="code-head"><span>TERMINAL · BUILD COMPILER</span><button class="copy-btn" type="button" data-copy="cargo build --release --bin veloxc">复制</button></div>
+            <pre><code>cargo build --release --bin veloxc</code></pre>
+          </div>
+          <div class="code-card">
+            <div class="code-head"><span>HELLO.VX</span><button class="copy-btn" type="button" data-copy='fn main() {
+    println("Hello, Velox!");
+}'>复制</button></div>
+            <pre><code>fn main() {
+    println("Hello, Velox!");
+}</code></pre>
+          </div>
+          <div class="code-card">
+            <div class="code-head"><span>COMPILE · RUN</span><button class="copy-btn" type="button" data-copy='cargo run --release --bin veloxc -- hello.vx -o hello
+./hello'>复制</button></div>
+            <pre><code>cargo run --release --bin veloxc -- hello.vx -o hello
+./hello</code></pre>
+          </div>
+          <p class="small-note" data-i18n="quickNote">提示：上面的调用方式与当前项目测试/开发流程一致。若你使用已构建的 veloxc，可直接调用 target/release/veloxc，并保留相同的源文件与 -o 参数形式。</p>
+        </section>
+
+        <section class="doc-section" id="format">
+          <div class="section-kicker">03 / SOURCE FORMAT</div>
+          <h2 data-i18n="formatTitle">文件格式与代码风格</h2>
+          <div class="split">
+            <div>
+              <h3 data-i18n="fileExtTitle">源文件</h3>
+              <p data-i18n="fileExtP">Velox 源代码使用 <code>.vx</code> 扩展名。文件通常以 using 声明依赖，再定义结构体、函数和 main 入口。</p>
+            </div>
+            <div>
+              <h3 data-i18n="styleTitle">推荐格式</h3>
+              <ul>
+                <li data-i18n="style1">使用 4 个空格缩进。</li>
+                <li data-i18n="style2">语句以分号结束。</li>
+                <li data-i18n="style3">代码块使用花括号。</li>
+                <li data-i18n="style4">类型注解写在变量名之后。</li>
+              </ul>
+            </div>
+          </div>
+          <div class="code-card">
+            <div class="code-head"><span>PROJECT LAYOUT</span></div>
+            <pre><code>my_project/
+├── src/
+│   ├── main.vx
+│   ├── math.vx
+│   └── models.vx
+└── build/</code></pre>
+          </div>
+        </section>
+
+        <section class="doc-section" id="syntax">
+          <div class="section-kicker">04 / LANGUAGE SYNTAX</div>
+          <h2 data-i18n="syntaxTitle">基础语法</h2>
+          <h3 data-i18n="commentsTitle">注释</h3>
+          <p data-i18n="commentsP">当前示例和源码采用 C 风格单行注释与块注释；如果你正在验证某种注释形式，请以 lexer 的实际支持为准。</p>
+          <div class="code-card"><div class="code-head"><span>COMMENTS</span></div><pre><code>// 单行注释 / Single-line comment
+
+/*
+   多行注释
+   Multi-line comment
+*/</code></pre></div>
+
+          <h3 data-i18n="variablesTitle">变量声明</h3>
+          <p data-i18n="variablesP"><code>let</code> 声明局部变量；<code>let mut</code> 声明可变变量。类型可以显式写出。当前编译器支持的类型推断仍在完善中，建议初学时优先写出类型注解。</p>
+          <div class="code-card"><div class="code-head"><span>VARIABLES</span><button class="copy-btn" type="button" data-copy='let count: i64 = 10;
+let price: f64 = 3.5;
+let ready: bool = true;
+let title: str = "Velox";
+
+let mut total: i64 = 0;
+total = total + count;'>复制</button></div><pre><code>let count: i64 = 10;
+let price: f64 = 3.5;
+let ready: bool = true;
+let title: str = "Velox";
+
+let mut total: i64 = 0;
+total = total + count;</code></pre></div>
+          <div class="callout"><strong data-i18n="mutTitle">let 与 let mut</strong><p data-i18n="mutText">不可变绑定用于不会重新赋值的变量；需要重新赋值时使用 let mut。不要将 mut 放在类型前面。</p></div>
+
+          <h3 data-i18n="literalsTitle">字面量</h3>
+          <table>
+            <thead><tr><th data-i18n="tableLiteral">类别</th><th data-i18n="tableExample">示例</th><th data-i18n="tableMeaning">说明</th></tr></thead>
+            <tbody>
+              <tr><td>Integer</td><td><code>0</code>, <code>42</code>, <code>-7</code></td><td data-i18n="litInt">整数值，常用于 i64。</td></tr>
+              <tr><td>Float</td><td><code>3.14</code>, <code>0.5</code></td><td data-i18n="litFloat">浮点值，常用于 f64。</td></tr>
+              <tr><td>Boolean</td><td><code>true</code>, <code>false</code></td><td data-i18n="litBool">布尔值。</td></tr>
+              <tr><td>String</td><td><code>"hello"</code></td><td data-i18n="litString">字符串字面量。</td></tr>
+            </tbody>
+          </table>
+        </section>
+
+        <section class="doc-section" id="types">
+          <div class="section-kicker">05 / TYPE SYSTEM</div>
+          <h2 data-i18n="typesTitle">类型系统</h2>
+          <p data-i18n="typesP">当前自托管类型检查器中可见的基础类型 ID 如下。结构体类型在内部以独立类型编号表示。</p>
+          <table>
+            <thead><tr><th data-i18n="typeName">类型</th><th data-i18n="typePurpose">用途</th><th data-i18n="typeSample">声明示例</th></tr></thead>
+            <tbody>
+              <tr><td><code>i64</code></td><td data-i18n="typeI64">64 位整数</td><td><code>let age: i64 = 24;</code></td></tr>
+              <tr><td><code>f64</code></td><td data-i18n="typeF64">64 位浮点数</td><td><code>let ratio: f64 = 0.75;</code></td></tr>
+              <tr><td><code>bool</code></td><td data-i18n="typeBool">布尔值</td><td><code>let active: bool = true;</code></td></tr>
+              <tr><td><code>str</code></td><td data-i18n="typeStr">字符串</td><td><code>let name: str = "Ada";</code></td></tr>
+              <tr><td><code>void</code></td><td data-i18n="typeVoid">无返回值函数的返回类型</td><td><code>fn log() -> void { }</code></td></tr>
+              <tr><td><code>struct</code></td><td data-i18n="typeStruct">用户定义的结构体类型</td><td><code>struct Point { x: f64 }</code></td></tr>
+            </tbody>
+          </table>
+          <div class="callout"><strong data-i18n="typeAdviceTitle">类型注解建议</strong><p data-i18n="typeAdviceText">当前阶段建议给局部变量、函数参数和返回值写清楚类型。特别是结构体局部变量，显式写成 <code>let p: Point = ...;</code> 可以避免依赖尚在完善的推断路径。</p></div>
+        </section>
+
+        <section class="doc-section" id="control">
+          <div class="section-kicker">06 / CONTROL FLOW</div>
+          <h2 data-i18n="controlTitle">流程控制</h2>
+          <h3>if / else</h3>
+          <div class="code-card"><div class="code-head"><span>CONDITIONAL</span></div><pre><code>fn classify(value: i64) -> i64 {
+    if value > 0 {
+        return 1;
+    } else {
+        return 0;
+    }
+}</code></pre></div>
+          <h3>while</h3>
+          <div class="code-card"><div class="code-head"><span>WHILE LOOP</span></div><pre><code>fn main() -> void {
+    let mut index: i64 = 0;
+    while index < 3 {
+        println(index);
+        index = index + 1;
+    }
+}</code></pre></div>
+          <h3>for / range</h3>
+          <div class="code-card"><div class="code-head"><span>RANGE LOOP</span></div><pre><code>fn main() -> void {
+    for index in 0..5 {
+        println(index);
+    }
+}</code></pre></div>
+          <p class="small-note" data-i18n="rangeNote">范围循环示例使用 0..5。当前项目测试已覆盖类似 0..3 的循环形式；范围边界的精确语义请以当前 parser/codegen 测试为准。</p>
+        </section>
+
+        <section class="doc-section" id="functions">
+          <div class="section-kicker">07 / FUNCTIONS</div>
+          <h2 data-i18n="functionsTitle">函数</h2>
+          <p data-i18n="functionsP">使用 <code>fn</code> 声明函数。参数采用 name: type 形式；返回类型通过 <code>-></code> 指定。没有返回值的函数可使用 <code>void</code>。</p>
+          <div class="code-card"><div class="code-head"><span>FUNCTION DECLARATION</span><button class="copy-btn" type="button" data-copy='fn add(a: i64, b: i64) -> i64 {
+    return a + b;
+}
+
+fn main() -> void {
+    let answer: i64 = add(20, 22);
+    println(answer);
+}'>复制</button></div><pre><code>fn add(a: i64, b: i64) -> i64 {
+    return a + b;
+}
+
+fn main() -> void {
+    let answer: i64 = add(20, 22);
+    println(answer);
+}</code></pre></div>
+          <ul>
+            <li data-i18n="fnRule1">函数名后面紧跟参数列表。</li>
+            <li data-i18n="fnRule2">参数之间使用逗号分隔。</li>
+            <li data-i18n="fnRule3">return 用于从函数返回值。</li>
+            <li data-i18n="fnRule4">main 是当前示例和编译入口使用的程序入口函数。</li>
+          </ul>
+        </section>
+
+        <section class="doc-section" id="structs">
+          <div class="section-kicker">08 / STRUCTS</div>
+          <h2 data-i18n="structsTitle">结构体</h2>
+          <p data-i18n="structsP">使用 <code>struct</code> 定义聚合数据类型。字段声明由字段名和类型组成；初始化时使用结构体名与命名字段。</p>
+          <div class="code-card"><div class="code-head"><span>STRUCT DEFINITION & INITIALIZATION</span></div><pre><code>struct Point {
+    x: f64,
+    y: f64
+}
+
+fn main() -> void {
+    let point: Point = Point {
+        x: 3.0,
+        y: 4.0
+    };
+    println(point.x);
+}</code></pre></div>
+          <p class="small-note" data-i18n="structNote">注意：结构体定义、初始化与字段访问已进入项目实现范围；局部变量自动推断、结构体返回值推断等代码生成边界仍应通过回归测试确认。教程示例显式标注 Point 类型。</p>
+        </section>
+
+        <section class="doc-section" id="modules">
+          <div class="section-kicker">09 / MODULES</div>
+          <h2 data-i18n="modulesTitle">模块与依赖</h2>
+          <p data-i18n="modulesP">当前项目使用 <code>using "path.vx";</code> 引入其他源文件。依赖路径按引用文件位置解析；编译器会收集依赖并在依赖方之前处理。</p>
+          <div class="code-card"><div class="code-head"><span>IMPORT A SOURCE FILE</span></div><pre><code>// main.vx
+using "math.vx";
+
+fn main() -> void {
+    println(add(20, 22));
+}</code></pre></div>
+          <div class="code-card"><div class="code-head"><span>DEPENDENCY FILE</span></div><pre><code>// math.vx
+fn add(a: i64, b: i64) -> i64 {
+    return a + b;
+}</code></pre></div>
+          <div class="callout"><strong data-i18n="depTitle">依赖检查</strong><p data-i18n="depText">编译器会避免重复处理同一依赖，并检测循环依赖。当前回归测试中，循环依赖会报告 E0203。</p></div>
+        </section>
+
+        <section class="doc-section" id="keywords">
+          <div class="section-kicker">10 / KEYWORDS</div>
+          <h2 data-i18n="keywordsTitle">关键字速查</h2>
+          <p data-i18n="keywordsP">下表列出当前语言示例与实现中明确使用的核心保留词。它不是对 lexer 全部 token 的替代清单；新增关键字请以 lexer 实现为准。</p>
+          <div class="keyword-grid">
+            <div><code>fn</code><span data-i18n="kwFn">声明函数</span></div>
+            <div><code>let</code><span data-i18n="kwLet">声明变量绑定</span></div>
+            <div><code>mut</code><span data-i18n="kwMut">声明可变绑定</span></div>
+            <div><code>return</code><span data-i18n="kwReturn">从函数返回</span></div>
+            <div><code>if</code><span data-i18n="kwIf">条件分支</span></div>
+            <div><code>else</code><span data-i18n="kwElse">备选分支</span></div>
+            <div><code>while</code><span data-i18n="kwWhile">条件循环</span></div>
+            <div><code>for</code><span data-i18n="kwFor">范围循环</span></div>
+            <div><code>in</code><span data-i18n="kwIn">范围循环中的迭代语法</span></div>
+            <div><code>struct</code><span data-i18n="kwStruct">声明结构体</span></div>
+            <div><code>using</code><span data-i18n="kwUsing">引入源文件</span></div>
+            <div><code>true / false</code><span data-i18n="kwBool">布尔字面量</span></div>
+          </div>
+        </section>
+
+        <section class="doc-section" id="operators">
+          <div class="section-kicker">11 / OPERATORS</div>
+          <h2 data-i18n="operatorsTitle">运算符</h2>
+          <p data-i18n="operatorsP">以下运算符出现在当前语法示例和编译器代码生成中。优先级和完整组合规则以 parser 的实现为准。</p>
+          <table>
+            <thead><tr><th data-i18n="opGroup">分组</th><th data-i18n="opSymbols">符号</th><th data-i18n="opUse">用途</th></tr></thead>
+            <tbody>
+              <tr><td data-i18n="opArithmetic">算术</td><td><code>+ - * / %</code></td><td data-i18n="opArithmeticUse">数值运算</td></tr>
+              <tr><td data-i18n="opCompare">比较</td><td><code>== != &lt; &gt; &lt;= &gt;=</code></td><td data-i18n="opCompareUse">比较两个表达式</td></tr>
+              <tr><td data-i18n="opLogic">逻辑</td><td><code>&amp;&amp; || !</code></td><td data-i18n="opLogicUse">逻辑组合与取反</td></tr>
+              <tr><td data-i18n="opAssign">赋值</td><td><code>=</code></td><td data-i18n="opAssignUse">给可变变量赋值</td></tr>
+              <tr><td data-i18n="opRange">范围</td><td><code>..</code></td><td data-i18n="opRangeUse">for 范围表达式</td></tr>
+              <tr><td data-i18n="opField">字段</td><td><code>.</code></td><td data-i18n="opFieldUse">访问结构体字段</td></tr>
+              <tr><td data-i18n="opReturn">返回类型</td><td><code>-&gt;</code></td><td data-i18n="opReturnUse">函数返回类型标记</td></tr>
+            </tbody>
+          </table>
+        </section>
+
+        <section class="doc-section" id="compiler">
+          <div class="section-kicker">12 / COMPILER PIPELINE</div>
+          <h2 data-i18n="compilerTitle">编译器工作流</h2>
+          <p data-i18n="compilerP">当前编译器的核心过程可以概括为：读取文件、解析依赖、词法分析、语法分析、类型检查、生成 C，再调用本机 C 编译器。</p>
+          <div class="pipeline">
+            <div><b>01</b><strong>Source .vx</strong><span data-i18n="pipe1">Velox 源文件与依赖</span></div>
+            <i>→</i>
+            <div><b>02</b><strong>Lexer / Parser</strong><span data-i18n="pipe2">Token 与 AST</span></div>
+            <i>→</i>
+            <div><b>03</b><strong>Type Checker</strong><span data-i18n="pipe3">类型与语义检查</span></div>
+            <i>→</i>
+            <div><b>04</b><strong>C Backend</strong><span data-i18n="pipe4">生成 C 源码</span></div>
+            <i>→</i>
+            <div><b>05</b><strong>clang</strong><span data-i18n="pipe5">本机可执行文件</span></div>
+          </div>
+          <h3 data-i18n="compileCmdTitle">常用编译命令</h3>
+          <div class="code-card"><div class="code-head"><span>DEBUG / DEVELOPMENT</span><button class="copy-btn" type="button" data-copy='cargo run --bin veloxc -- src/main.vx -o build/app'>复制</button></div><pre><code>cargo run --bin veloxc -- src/main.vx -o build/app</code></pre></div>
+          <div class="code-card"><div class="code-head"><span>RELEASE</span><button class="copy-btn" type="button" data-copy='cargo run --release --bin veloxc -- src/main.vx -o build/app'>复制</button></div><pre><code>cargo run --release --bin veloxc -- src/main.vx -o build/app</code></pre></div>
+          <div class="code-card"><div class="code-head"><span>RUN OUTPUT</span><button class="copy-btn" type="button" data-copy='./build/app'>复制</button></div><pre><code>./build/app</code></pre></div>
+          <p class="small-note" data-i18n="compilerNote">输出路径由 -o 指定。生成 C 的中间文件路径取决于当前 driver 实现；若需单独检查 C 后端，可使用仓库中的 codegen_check 测试 harness。</p>
+        </section>
+
+        <section class="doc-section" id="bootstrap">
+          <div class="section-kicker">13 / SELF-HOSTING</div>
+          <h2 data-i18n="bootstrapTitle">Stage 0 → Stage 1 → Stage 2 → Stage 3</h2>
+          <p data-i18n="bootstrapP">Velox 的关键里程碑是用 Velox 编译器编译 Velox 编译器自身。当前仓库的 Stage 0 是 Rust 编译器；Stage 1 是由 Stage 0 编译出来的 VX 编译器；Stage 1 生成 Stage 2，后续阶段继续编译同一份 VX 编译器源码。</p>
+          <div class="stage-list">
+            <div><span>STAGE 0</span><p data-i18n="stage0">Rust 实现的引导编译器。</p></div>
+            <div><span>STAGE 1</span><p data-i18n="stage1">由 Stage 0 编译 selfhost/src/main.vx 得到的 VX 编译器。</p></div>
+            <div><span>STAGE 2</span><p data-i18n="stage2">由 Stage 1 执行并生成的下一阶段编译器。</p></div>
+            <div><span>STAGE 3+</span><p data-i18n="stage3">继续自编译，并检查生成结果是否稳定。</p></div>
+          </div>
+          <div class="callout"><strong data-i18n="bootstrapProofTitle">确定性验证</strong><p data-i18n="bootstrapProofText">项目已验证 Stage 2 与 Stage 3 生成的 C 文件逐字节一致，并且 Stage 3 能再次执行自编译流程。这是重要的自举一致性证据，但不等同于所有语言功能均已完成。</p></div>
+        </section>
+
+        <section class="doc-section" id="errors">
+          <div class="section-kicker">14 / TROUBLESHOOTING</div>
+          <h2 data-i18n="errorsTitle">常见错误与排查</h2>
+          <div class="faq">
+            <details open><summary data-i18n="err1Q">Cargo 提示有多个 binary</summary><p data-i18n="err1A">命令中指定编译器目标：<code>cargo run --bin veloxc -- ...</code>。不要省略 --bin veloxc。</p></details>
+            <details><summary data-i18n="err2Q">找不到 clang</summary><p data-i18n="err2A">安装并配置可用的 C 编译器，确认 clang 在 PATH 中；Velox 当前后端依赖外部 C 编译器生成本机程序。</p></details>
+            <details><summary data-i18n="err3Q">结构体局部变量编译失败</summary><p data-i18n="err3A">开发阶段优先显式标注变量类型，例如 <code>let p: Pair = Pair { ... };</code>。自动推断路径仍需由 codegen 回归测试确认。</p></details>
+            <details><summary data-i18n="err4Q">循环依赖</summary><p data-i18n="err4A">检查 using 文件关系是否形成环。当前驱动器的循环依赖回归使用错误码 E0203。</p></details>
+            <details><summary data-i18n="err5Q">程序输出与预期不同</summary><p data-i18n="err5A">先确认 parser 和 type checker 均通过，再检查生成的 C 文件；最后单独编译并运行 C 输出，以区分前端、后端与本机编译阶段的问题。</p></details>
+          </div>
+        </section>
+
+        <section class="doc-section" id="reference">
+          <div class="section-kicker">15 / COMPLETE EXAMPLE</div>
+          <h2 data-i18n="referenceTitle">完整示例：从定义到运行</h2>
+          <div class="code-card"><div class="code-head"><span>MAIN.VX</span><button class="copy-btn" type="button" data-copy='struct Pair {
+    left: i64,
+    right: i64
+}
+
+fn add(a: i64, b: i64) -> i64 {
+    return a + b;
+}
+
+fn main() -> void {
+    let pair: Pair = Pair {
+        left: 20,
+        right: 22
+    };
+
+    let answer: i64 = add(pair.left, pair.right);
+    println(answer);
+}'>复制</button></div><pre><code>struct Pair {
+    left: i64,
+    right: i64
+}
+
+fn add(a: i64, b: i64) -> i64 {
+    return a + b;
+}
+
+fn main() -> void {
+    let pair: Pair = Pair {
+        left: 20,
+        right: 22
+    };
+
+    let answer: i64 = add(pair.left, pair.right);
+    println(answer);
+}</code></pre></div>
+          <div class="code-card"><div class="code-head"><span>BUILD & EXECUTE</span></div><pre><code>cargo run --release --bin veloxc -- main.vx -o app
+./app
+
+# Expected output:
+42</code></pre></div>
+          <div class="end-card">
+            <span class="green-dot"></span>
+            <h3 data-i18n="endTitle">Keep building Velox.</h3>
+            <p data-i18n="endText">从小程序、类型检查与代码生成测试开始，逐步扩展语言能力，并始终让回归测试和自举验证跟上实现。</p>
+          </div>
+        </section>
+
+        <footer class="footer">
+          <span>VELOX · LANGUAGE TUTORIAL</span>
+          <span data-i18n="footerText">独立静态页面 · 无 Tailwind · 无外部运行时依赖</span>
+        </footer>
+      </main>
+    </div>
+  </div>
+  <button class="back-top" id="backTop" type="button" aria-label="Back to top">↑</button>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+</body>
+</html>
