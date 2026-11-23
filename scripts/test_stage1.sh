@@ -98,6 +98,33 @@ fn main() {
 }
 VX
 
+cat > "$WORK/parallel-stage1.vx" <<'VX'
+fn main() {
+    parallel for i in 0..3 {
+    }
+    println(42);
+}
+VX
+
+cat > "$WORK/parallel-outer-write.vx" <<'VX'
+fn main() {
+    let mut total: i64 = 0;
+    parallel for i in 0..3 {
+        total = total + 1;
+    }
+}
+VX
+
+cat > "$WORK/parallel-local-write.vx" <<'VX'
+fn main() {
+    parallel for i in 0..3 {
+        let mut local: i64 = 0;
+        local = local + 1;
+    }
+    println(42);
+}
+VX
+
 cat > "$HARNESS" <<VX
 using "lexer.vx";
 using "ast.vx";
@@ -155,6 +182,24 @@ fn main() {
         println("NESTED IMMUTABLE PASS");
     }
 
+    if compile_file("$WORK/parallel-stage1.vx", "$WORK/parallel-stage1") {
+        println("PARALLEL STAGE1 COMPILE PASS");
+    } else {
+        println("PARALLEL STAGE1 COMPILE FAIL");
+    }
+
+    if compile_file("$WORK/parallel-outer-write.vx", "$WORK/parallel-outer-write") {
+        println("PARALLEL OUTER WRITE FAIL");
+    } else {
+        println("PARALLEL OUTER WRITE REJECT");
+    }
+
+    if compile_file("$WORK/parallel-local-write.vx", "$WORK/parallel-local-write") {
+        println("PARALLEL LOCAL WRITE PASS");
+    } else {
+        println("PARALLEL LOCAL WRITE FAIL");
+    }
+
     if compile_file("$WORK/return-field.vx", "$WORK/return-field") {
         println("RETURN FIELD FAIL");
     } else {
@@ -183,7 +228,17 @@ grep -q "E0308: field assignment type mismatch: expected i64, found bool" "$WORK
 grep -q "NESTED FIELD PASS" "$WORK/result.log"
 grep -q "NESTED IMMUTABLE PASS" "$WORK/result.log"
 grep -q "RETURN FIELD PASS" "$WORK/result.log"
+grep -q "PARALLEL STAGE1 COMPILE PASS" "$WORK/result.log"
+grep -q "PARALLEL OUTER WRITE REJECT" "$WORK/result.log"
+grep -q "PARALLEL LOCAL WRITE PASS" "$WORK/result.log"
 
+
+
+grep -q "#pragma omp parallel for" "$WORK/parallel-stage1.c"
+clang -std=c11 -O2 "$WORK/parallel-stage1.c" -o "$WORK/parallel-stage1"
+output=$("$WORK/parallel-stage1")
+test "$output" = "42"
+echo "PARALLEL FOR CODEGEN PASS"
 
 echo "=== Compile generated C ==="
 for name in single duplicate; do

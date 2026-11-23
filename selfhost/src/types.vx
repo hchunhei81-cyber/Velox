@@ -353,6 +353,46 @@ fn tc_field_root_var(state: i64, source: str, expr: i64, vars: i64) -> i64 {
     return -1;
 }
 
+
+fn tc_parallel_reduction(state: i64, source: str, lhs: i64, rhs: i64, vars: i64) -> bool {
+    let nodes: i64 = list_i64_get(state,0);
+    if lhs < 0 || rhs < 0 { return false; }
+    if ast_node_kind(nodes,lhs) < 24 ||ast_node_kind(nodes,lhs) > 24 || ast_node_kind(nodes,rhs) < 27 || ast_node_kind(nodes,rhs) > 27 { return false; }
+    if ast_node_data(nodes,rhs,3) < 30 || ast_node_data(nodes,rhs,3) > 30{ return false; }
+
+    let ls: i64 = ast_node_data(nodes,lhs,1);
+    let le: i64 = ast_node_data(nodes,lhs,2);
+    let left: i64 = ast_node_data(nodes,rhs,4);
+    let right: i64 = ast_node_data(nodes,rhs,5);
+
+    if left >= 0 && ast_node_kind(nodes,left) == 24 {
+        if str_eq(str_slice(source,ls,le),
+            str_slice(source,ast_node_data(nodes,left,1),ast_node_data(nodes,left,2))) {
+            if right >= 0 && ast_node_kind(nodes,right) == 20 { return true; }
+            if right >= 0 && ast_node_kind(nodes,right) == 24 {
+                if !(str_eq(str_slice(source,ls,le),
+                    str_slice(source,ast_node_data(nodes,right,1),ast_node_data(nodes,right,2)))){
+                    return tc_expr(state,source,rhs,vars) == 1;
+                }
+            }
+        }
+    }
+
+    if right >= 0 && ast_node_kind(nodes,right) == 24 {
+        if str_eq(str_slice(source,ls,le),
+            str_slice(source,ast_node_data(nodes,right,1),ast_node_data(nodes,right,2))) {
+            if left >= 0 && ast_node_kind(nodes,left) == 20 { return true; }
+            if left >= 0 && ast_node_kind(nodes,left) == 24 {
+                if !(str_eq(str_slice(source,ls,le),
+                    str_slice(source,ast_node_data(nodes,left,1),ast_node_data(nodes,left,2)))) {
+                    return tc_expr(state,source,rhs,vars) == 1;
+                }
+            }
+        }
+    }
+    return false;
+}
+
 fn tc_block(state: i64, source: str, block: i64, vars: i64, return_type: i64, is_parallel: bool) -> bool {
     let mut statement: i64 = ast_node_data(list_i64_get(state,0),block,3);
     let saved: i64 = list_i64_get(state,6);
@@ -373,7 +413,8 @@ fn tc_block(state: i64, source: str, block: i64, vars: i64, return_type: i64, is
                 list_i64_set(state,2,ast_node_data(list_i64_get(state,0),statement,1));
                 list_i64_set(state,7,502);
             } else {
-                if list_i64_get(vars,root+3) == 0 {
+                if list_i64_get(vars,root+3) == 0 ||
+                   (is_parallel && root / 5 < list_i64_get(state,10)) {
                     list_i64_set(state,1,1);
                     list_i64_set(state,2,ast_node_data(list_i64_get(state,0),statement,1));
                     list_i64_set(state,7,501);
@@ -414,7 +455,10 @@ fn tc_block(state: i64, source: str, block: i64, vars: i64, return_type: i64, is
                     list_i64_set(state,1,1);
                     list_i64_set(state,2,ast_node_data(list_i64_get(state,0),statement,1));
                 } else {
-                    if list_i64_get(vars,p+3) == 0 || actual < list_i64_get(vars,p+2) || actual > list_i64_get(vars,p+2){
+                    if list_i64_get(vars,p+3) == 0 ||
+                       (is_parallel && p / 5 < list_i64_get(state,10)) ||
+                       actual < list_i64_get(vars,p+2) ||
+                       actual > list_i64_get(vars,p+2) {
                         list_i64_set(state,1,1);
                         list_i64_set(state,2,ast_node_data(list_i64_get(state,0),statement,1));
                     }
@@ -468,9 +512,14 @@ fn tc_block(state: i64, source: str, block: i64, vars: i64, return_type: i64, is
                                 let loop_start: i64 = ast_node_data(list_i64_get(state,0),statement,6);
                                 let loop_end: i64 = tc_ident_end(source,loop_start);
                                 let outer_count: i64 = list_i64_get(state,6);
+                                let old_parallel_boundary: i64 = list_i64_get(state,10);
+                                if kind == 13 {
+                                    list_i64_set(state,10,outer_count);
+                                }
                                 tc_add_var(state,vars,loop_start,loop_end,1,0);
                                 tc_block(state,source,c,vars,return_type,is_parallel || kind == 13);
                                 list_i64_set(state,6,outer_count);
+                                list_i64_set(state,10,old_parallel_boundary);
                             } else {
                                 if kind == 14 {
                                     if tc_expr(state, source,a,vars) < 0 {
@@ -491,7 +540,7 @@ fn tc_block(state: i64, source: str, block: i64, vars: i64, return_type: i64, is
 }
 
 pub fn typecheck(state: i64, source: str, nodes: i64) -> bool {
-    while list_i64_len(state) < 10 {
+    while list_i64_len(state) < 11 {
         list_i64_push(state,0);
     }
     list_i64_set(state,0,nodes);
@@ -502,6 +551,7 @@ pub fn typecheck(state: i64, source: str, nodes: i64) -> bool {
     list_i64_set(state,5,list_i64_new());
     list_i64_set(state,6,0);
     list_i64_set(state,7,0);
+    list_i64_set(state,10,-1);
 
     let mut declaration: i64 = ast_node_data(nodes,0,3);
     while declaration >= 0 {
