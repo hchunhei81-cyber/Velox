@@ -5,7 +5,8 @@ using "types.vx";
 using "codegen.vx";
 
 fn main() {
-    let source: str = "fn add(a: i64, b: i64) -> i64 { return a + b; } fn main() { println(add(20, 22)); }";
+    let source: str = "struct Pair { a: i64, b: i64 } fn add(a: i64, b: i64) -> i64 { return a + b; } fn main() -> void { let text: str = \"Velox\"; println(text); println(true); println(false); let mut sum: i64 = 0; for i in 0..3 { sum = sum + i; } let mut n: i64 = 0; while n < 2 { sum = sum + n; n = n + 1; } let p = Pair { a: sum, b: 2 }; println(p.a + p.b); println(add(20, 22)); let inferred_i = 7; let inferred_f = 1.5; let inferred_s = \"inferred\"; let inferred_b = true; let inferred_copy = inferred_i; let inferred_sum = inferred_i + 3; let inferred_cmp = inferred_i < 10; let inferred_call = add(20, 22); }";
+
     let tokens: i64 = tokenize(source);
     let nodes: i64 = parse_program(tokens);
 

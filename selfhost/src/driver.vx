@@ -1,3 +1,13 @@
+fn drv_type_name(ty: i64) -> str {
+    if ty == 1 { return "i64"; }
+    if ty == 2 { return "f64"; }
+    if ty == 3 { return "bool"; }
+    if ty == 4 { return "str"; }
+    if ty == 5 { return "void"; }
+    if ty >= 100 { return "struct"; }
+    return "unknown";
+}
+
 // Velox Stage 1 recursive multi-file compiler driver
 
 fn drv_contains(haystack: str, needle: str) -> bool {
@@ -201,7 +211,23 @@ pub fn compile_source(source: str, output_path: str) -> bool {
 
     let state: i64 = list_i64_new();
     if typecheck(state, clean, nodes) == false {
-        println("E1002: type checking failed");
+        let error_code: i64 = typecheck_error_code(state);
+        if error_code == 501 {
+            let name: str = str_slice(clean,typecheck_error_data(state,0),typecheck_error_data(state,1));
+            println(str_concat(str_concat("E0500: cannot modify a field of immutable variable '",name),"'"));
+        } else {
+            if error_code == 502 {
+                println("E0500: field assignment target must be rooted in a local variable");
+            } else {
+                if error_code == 308 {
+                    let expected: str = drv_type_name(typecheck_error_data(state,0));
+                    let actual: str = drv_type_name(typecheck_error_data(state,1));
+                    println(str_concat(str_concat(str_concat("E0308: field assignment type mismatch: expected ",expected),", found "),actual));
+                } else {
+                    println("E1002: type checking failed");
+                }
+            }
+        }
         println(typecheck_error_position(state));
         return false;
     }

@@ -290,6 +290,22 @@ fn tc_expr(state: i64, source: str, node: i64, vars: i64) -> i64 {
             let field_start: i64 = ast_node_data(list_i64_get(state,0),arg,3);
             let field_end: i64 = ast_node_data(list_i64_get(state,0),arg,4);
             let actual: i64 = tc_expr(state, source,ast_node_data(list_i64_get(state,0),arg,5),vars);
+
+            // Reject duplicate field initializers.
+            let mut prior: i64 = b;
+            let mut duplicate: bool = false;
+            while prior >= 0 && !(prior == arg) {
+                if str_eq(
+                    str_slice(source,field_start,field_end),
+                    str_slice(source,
+                        ast_node_data(list_i64_get(state,0),prior,3),
+                        ast_node_data(list_i64_get(state,0),prior,4))
+                ) {
+                    duplicate = true;
+                }
+                prior = ast_node_data(list_i64_get(state,0),prior,7);
+            }
+
             let mut f: i64 = fields;
             let mut found: i64 = -1;
             while f >= 0 {
@@ -299,7 +315,7 @@ fn tc_expr(state: i64, source: str, node: i64, vars: i64) -> i64 {
                 }
                 f = ast_node_data(list_i64_get(state,0),f,7);
             }
-            if found < 0 || found < actual || found > actual { return -1; }
+            if duplicate || found < 0 || found < actual || found > actual { return -1; }
             count = count + 1;
             arg = ast_node_data(list_i64_get(state,0),arg,7);
         }
@@ -315,6 +331,28 @@ fn tc_expr(state: i64, source: str, node: i64, vars: i64) -> i64 {
     return -1;
 }
 
+
+fn tc_field_root_var(state: i64, source: str, expr: i64, vars: i64) -> i64 {
+    if expr < 0 { return -1; }
+
+    let nodes: i64 = list_i64_get(state,0);
+    let kind: i64 = ast_node_kind(nodes,expr);
+
+    if kind == 24 {
+        let ns: i64 = ast_node_data(nodes,expr,1);
+        let ne: i64 = ast_node_data(nodes,expr,2);
+        return tc_find_var(state,source,vars,ns,ne);
+    }
+
+    if kind == 29 {
+        return tc_field_root_var(
+            state,source,ast_node_data(nodes,expr,3),vars
+        );
+    }
+
+    return -1;
+}
+
 fn tc_block(state: i64, source: str, block: i64, vars: i64, return_type: i64, is_parallel: bool) -> bool {
     let mut statement: i64 = ast_node_data(list_i64_get(state,0),block,3);
     let saved: i64 = list_i64_get(state,6);
@@ -324,6 +362,35 @@ fn tc_block(state: i64, source: str, block: i64, vars: i64, return_type: i64, is
         let a: i64 = ast_node_data(list_i64_get(state,0),statement,3);
         let b: i64 = ast_node_data(list_i64_get(state,0),statement,4);
         let c: i64 = ast_node_data(list_i64_get(state,0),statement,5);
+
+        // Struct field assignment diagnostics.
+        if kind == 8 {
+            let root: i64 = tc_field_root_var(state,source,a,vars);
+            let expected: i64 = tc_expr(state,source,a,vars);
+            let actual: i64 = tc_expr(state,source,b,vars);
+            if root < 0 {
+                list_i64_set(state,1,1);
+                list_i64_set(state,2,ast_node_data(list_i64_get(state,0),statement,1));
+                list_i64_set(state,7,502);
+            } else {
+                if list_i64_get(vars,root+3) == 0 {
+                    list_i64_set(state,1,1);
+                    list_i64_set(state,2,ast_node_data(list_i64_get(state,0),statement,1));
+                    list_i64_set(state,7,501);
+                    list_i64_set(state,8,list_i64_get(vars,root));
+                    list_i64_set(state,9,list_i64_get(vars,root+1));
+                } else {
+                    if expected < 0 || actual < 0 || expected < actual || expected > actual {
+                        list_i64_set(state,1,1);
+                        list_i64_set(state,2,ast_node_data(list_i64_get(state,0),statement,1));
+                        list_i64_set(state,7,308);
+                        list_i64_set(state,8,expected);
+                        list_i64_set(state,9,actual);
+                    }
+                }
+            }
+        }
+
 
         if kind == 6 {
             let ns: i64 = ast_node_data(list_i64_get(state,0),statement,6);
@@ -424,7 +491,7 @@ fn tc_block(state: i64, source: str, block: i64, vars: i64, return_type: i64, is
 }
 
 pub fn typecheck(state: i64, source: str, nodes: i64) -> bool {
-    while list_i64_len(state) < 8 {
+    while list_i64_len(state) < 10 {
         list_i64_push(state,0);
     }
     list_i64_set(state,0,nodes);
@@ -519,4 +586,13 @@ pub fn typecheck(state: i64, source: str, nodes: i64) -> bool {
 
 pub fn typecheck_error_position(state: i64) -> i64 {
     return list_i64_get(state,2);
+}
+
+pub fn typecheck_error_code(state: i64) -> i64 {
+    return list_i64_get(state,7);
+}
+
+pub fn typecheck_error_data(state: i64, index: i64) -> i64 {
+    if index == 0 { return list_i64_get(state,8); }
+    return list_i64_get(state,9);
 }

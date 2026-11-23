@@ -43,6 +43,61 @@ fn main() {
 }
 VX
 
+cat > "$WORK/field-mutable.vx" <<'VX'
+struct Point { x: i64, y: i64 }
+fn main() {
+    let mut p = Point { x: 40, y: 2 };
+    p.x = 40;
+    p.y = p.x + 2;
+    println(p.x + p.y);
+}
+VX
+
+cat > "$WORK/field-immutable.vx" <<'VX'
+struct Point { x: i64 }
+fn main() {
+    let p = Point { x: 1 };
+    p.x = 2;
+}
+VX
+
+cat > "$WORK/field-mismatch.vx" <<'VX'
+struct Point { x: i64 }
+fn main() {
+    let mut p = Point { x: 1 };
+    p.x = true;
+}
+VX
+
+cat > "$WORK/nested-field.vx" <<'VX'
+struct Inner { x: i64 }
+struct Outer { inner: Inner }
+fn main() {
+    let mut p = Outer { inner: Inner { x: 1 } };
+    p.inner.x = 40;
+    println(p.inner.x + 2);
+}
+VX
+
+cat > "$WORK/nested-immutable.vx" <<'VX'
+struct Inner { x: i64 }
+struct Outer { inner: Inner }
+fn main() {
+    let p = Outer { inner: Inner { x: 1 } };
+    p.inner.x = 2;
+}
+VX
+
+cat > "$WORK/return-field.vx" <<'VX'
+struct Point { x: i64 }
+fn make_point() -> Point {
+    return Point { x: 1 };
+}
+fn main() {
+    make_point().x = 2;
+}
+VX
+
 cat > "$HARNESS" <<VX
 using "lexer.vx";
 using "ast.vx";
@@ -69,6 +124,43 @@ fn main() {
     } else {
         println("CYCLE PASS");
     }
+
+    if compile_file("$WORK/field-mutable.vx", "$WORK/field-mutable") {
+        println("FIELD MUTABLE PASS");
+    } else {
+        println("FIELD MUTABLE FAIL");
+    }
+
+    if compile_file("$WORK/field-immutable.vx", "$WORK/field-immutable") {
+        println("FIELD IMMUTABLE FAIL");
+    } else {
+        println("FIELD IMMUTABLE PASS");
+    }
+
+    if compile_file("$WORK/field-mismatch.vx", "$WORK/field-mismatch") {
+        println("FIELD MISMATCH FAIL");
+    } else {
+        println("FIELD MISMATCH PASS");
+    }
+
+    if compile_file("$WORK/nested-field.vx", "$WORK/nested-field") {
+        println("NESTED FIELD PASS");
+    } else {
+        println("NESTED FIELD FAIL");
+    }
+
+    if compile_file("$WORK/nested-immutable.vx", "$WORK/nested-immutable") {
+        println("NESTED IMMUTABLE FAIL");
+    } else {
+        println("NESTED IMMUTABLE PASS");
+    }
+
+    if compile_file("$WORK/return-field.vx", "$WORK/return-field") {
+        println("RETURN FIELD FAIL");
+    } else {
+        println("RETURN FIELD PASS");
+    }
+
 }
 VX
 
@@ -82,6 +174,16 @@ grep -q "SINGLE PASS" "$WORK/result.log"
 grep -q "DUPLICATE PASS" "$WORK/result.log"
 grep -q "E0203: circular dependency" "$WORK/result.log"
 grep -q "CYCLE PASS" "$WORK/result.log"
+grep -q "FIELD MUTABLE PASS" "$WORK/result.log"
+grep -q "FIELD IMMUTABLE PASS" "$WORK/result.log"
+grep -q "FIELD MISMATCH PASS" "$WORK/result.log"
+grep -q "E0500: cannot modify a field of immutable variable 'p'" "$WORK/result.log"
+grep -q "E0500: field assignment target must be rooted in a local variable" "$WORK/result.log"
+grep -q "E0308: field assignment type mismatch: expected i64, found bool" "$WORK/result.log"
+grep -q "NESTED FIELD PASS" "$WORK/result.log"
+grep -q "NESTED IMMUTABLE PASS" "$WORK/result.log"
+grep -q "RETURN FIELD PASS" "$WORK/result.log"
+
 
 echo "=== Compile generated C ==="
 for name in single duplicate; do
@@ -90,5 +192,67 @@ for name in single duplicate; do
     test "$output" = "42"
     echo "$name execution: $output PASS"
 done
+
+
+clang -std=c11 -O2 "$WORK/field-mutable.c" -o "$WORK/field-mutable"
+output=$("$WORK/field-mutable")
+test "$output" = "82"
+echo "struct field assignment execution: $output PASS"
+
+clang -std=c11 -O2 "$WORK/nested-field.c" -o "$WORK/nested-field"
+output=$("$WORK/nested-field")
+test "$output" = "42"
+echo "nested struct field execution: $output PASS"
+
+echo "=== Code generation regression ==="
+cargo run --release --bin veloxc -- selfhost/src/codegen_check.vx -o "$WORK/codegen-check"
+"$WORK/codegen-check" | tee "$WORK/codegen.log"
+grep -q "CODEGEN PASSED" "$WORK/codegen.log"
+
+echo "=== Literal type inference regression ==="
+grep -q "int64_t vxv_696e6665727265645f69" /tmp/velox-stage1-generated.c
+grep -q "double vxv_696e6665727265645f66" /tmp/velox-stage1-generated.c
+grep -q "velox_str vxv_696e6665727265645f73" /tmp/velox-stage1-generated.c
+grep -q "bool vxv_696e6665727265645f62" /tmp/velox-stage1-generated.c
+echo "I64 F64 STR BOOL INFERENCE PASS"
+grep -q "int64_t vxv_696e6665727265645f636f7079" /tmp/velox-stage1-generated.c
+grep -q "int64_t vxv_696e6665727265645f73756d" /tmp/velox-stage1-generated.c
+grep -q "bool vxv_696e6665727265645f636d70" /tmp/velox-stage1-generated.c
+echo "VARIABLE ARITHMETIC COMPARISON INFERENCE PASS"
+grep -q "int64_t vxv_696e6665727265645f63616c6c" /tmp/velox-stage1-generated.c
+echo "FUNCTION RETURN TYPE INFERENCE PASS"
+
+clang -std=c11 -O2 /tmp/velox-stage1-generated.c -o "$WORK/codegen-check-run"
+output=$("$WORK/codegen-check-run")
+expected=$(printf 'Velox\ntrue\nfalse\n6\n42')
+if [ "$output" != "$expected" ]; then
+    echo "CODEGEN OUTPUT MISMATCH"
+    printf 'Expected:\n%s\nActual:\n%s\n' "$expected" "$output"
+    exit 1
+fi
+echo "STRING BOOL LOOP FUNCTION STRUCT PASS"
+
+echo "=== Three-stage VX self-bootstrap ==="
+mkdir -p /tmp/velox-bootstrap
+
+cargo run --release --bin veloxc -- selfhost/src/__bootstrap_test.vx -o "$WORK/bootstrap-stage1"
+"$WORK/bootstrap-stage1" | tee "$WORK/bootstrap-stage1.log"
+grep -q "BOOTSTRAP PASS" "$WORK/bootstrap-stage1.log"
+
+clang -w /tmp/velox-bootstrap/stage2.c -o "$WORK/bootstrap-stage2"
+"$WORK/bootstrap-stage2" | tee "$WORK/bootstrap-stage2.log"
+grep -q "COMPILATION PASSED" "$WORK/bootstrap-stage2.log"
+
+echo "=== Stage 2 / Stage 3 deterministic comparison ==="
+cmp /tmp/velox-bootstrap/stage2.c /tmp/velox-bootstrap/stage3.c
+echo "STAGE 2 / STAGE 3 IDENTICAL"
+
+clang -w /tmp/velox-bootstrap/stage3.c -o "$WORK/bootstrap-stage3"
+cp /tmp/velox-bootstrap/stage3.c "$WORK/stage3-before.c"
+"$WORK/bootstrap-stage3" | tee "$WORK/bootstrap-stage3.log"
+grep -q "COMPILATION PASSED" "$WORK/bootstrap-stage3.log"
+
+cmp "$WORK/stage3-before.c" /tmp/velox-bootstrap/stage3.c
+echo "STAGE 3 SELF-COMPILATION PASS"
 
 echo "=== STAGE 1 ALL TESTS PASSED ==="

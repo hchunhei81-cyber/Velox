@@ -136,6 +136,109 @@ fn cg_is_string_local(source: str, nodes: i64,
     return false;
 }
 
+
+fn cg_infer_type(source: str, nodes: i64, node: i64,
+                 params: i64, body: i64) -> str {
+    if node < 0 { return ""; }
+
+    let kind: i64 = cg_node(nodes, node, 0);
+
+    if kind == 20 { return "int64_t"; }
+    if kind == 21 { return "double"; }
+    if kind == 22 { return "velox_str"; }
+    if kind == 23 { return "bool"; }
+
+    if kind == 24 {
+        let name: str = cg_slice(source,
+            cg_node(nodes, node, 1), cg_node(nodes, node, 2));
+
+        let mut param: i64 = params;
+        while param >= 0 {
+            let param_name: str = cg_slice(source,
+                cg_node(nodes, param, 1), cg_node(nodes, param, 2));
+            if str_eq(name, param_name) {
+                let type_node: i64 = cg_node(nodes, param, 3);
+                if type_node >= 0 { return cg_type(source, nodes, type_node); }
+                return "";
+            }
+            param = cg_node(nodes, param, 7);
+        }
+
+        let mut statement: i64 = cg_node(nodes, body, 3);
+        while statement >= 0 {
+            if cg_node(nodes, statement, 0) == 6 {
+                let name_start: i64 = cg_node(nodes, statement, 6);
+                let mut name_end: i64 = name_start;
+                while name_end < str_len(source) &&
+                    ((str_byte_at(source, name_end) >= 48 &&
+                      str_byte_at(source, name_end) <= 57) ||
+                     (str_byte_at(source, name_end) >= 65 &&
+                      str_byte_at(source, name_end) <= 90) ||
+                     (str_byte_at(source, name_end) >= 97 &&
+                      str_byte_at(source, name_end) <= 122) ||
+                     str_byte_at(source, name_end) == 95) {
+                    name_end = name_end + 1;
+                }
+
+                let local_name: str = cg_slice(source, name_start, name_end);
+                if str_eq(name, local_name) {
+                    let declared: i64 = cg_node(nodes, statement, 4);
+                    if declared >= 0 {
+                        return cg_type(source, nodes, declared);
+                    }
+                    return cg_infer_type(source, nodes,
+                        cg_node(nodes, statement, 5), params, body);
+                }
+            }
+            statement = cg_node(nodes, statement, 7);
+        }
+        return "";
+    }
+
+    if kind == 25 {
+        return cg_infer_type(source, nodes,
+            cg_node(nodes, node, 3), params, body);
+    }
+
+    if kind == 26 { return "bool"; }
+
+    if kind == 27 {
+        let op: i64 = cg_node(nodes, node, 3);
+        if op >= 36 && op <= 42 { return "bool"; }
+        return cg_infer_type(source, nodes,
+            cg_node(nodes, node, 4), params, body);
+    }
+
+    if kind == 28 {
+        let callee: i64 = cg_node(nodes, node, 3);
+        let call_name: str = cg_slice(source,
+            cg_node(nodes, callee, 1), cg_node(nodes, callee, 2));
+
+        let mut declaration: i64 = cg_node(nodes, 0, 3);
+        while declaration >= 0 {
+            if cg_node(nodes, declaration, 0) == 1 {
+                let name_node: i64 = cg_node(nodes, declaration, 4);
+                let function_name: str = cg_slice(source,
+                    cg_node(nodes, name_node, 1),
+                    cg_node(nodes, name_node, 2));
+
+                if str_eq(call_name, function_name) {
+                    let meta: i64 = cg_node(nodes, declaration, 5);
+                    return cg_type(source, nodes, cg_node(nodes, meta, 4));
+                }
+            }
+            declaration = cg_node(nodes, declaration, 7);
+        }
+        return "";
+    }
+
+    if kind == 30 {
+        return cg_type(source, nodes, cg_node(nodes, node, 3));
+    }
+
+    return "";
+}
+
 fn cg_expr(source: str, nodes: i64, node: i64, params: i64, body: i64) -> str {
     if node < 0 { return "0"; }
 
@@ -272,8 +375,15 @@ fn cg_stmt(source: str, nodes: i64, node: i64, params: i64, body: i64) -> str {
 
     if kind == 6 {
         let mut mutable: i64 = cg_node(nodes, node, 3);
-        let type_node: i64 = cg_node(nodes, node, 4);
+        let mut type_node: i64 = cg_node(nodes, node, 4);
         let init: i64 = cg_node(nodes, node, 5);
+        let mut inferred_ty: str = "";
+        if type_node < 0 && init >= 0 {
+            inferred_ty = cg_infer_type(source, nodes, init, params, body);
+            if cg_node(nodes, init, 0) == 30 {
+                type_node = cg_node(nodes, init, 3);
+            }
+        }
         let name_start: i64 = cg_node(nodes, node, 6);
         let mut name_end: i64 = name_start;
         while name_end < str_len(source) &&
@@ -290,7 +400,11 @@ fn cg_stmt(source: str, nodes: i64, node: i64, params: i64, body: i64) -> str {
             cg_slice(source, name_start, name_end));
         let mut ty: str = cg_type(source, nodes, type_node);
         if type_node < 0 {
-            ty = "int64_t";
+            if str_eq(inferred_ty, "") {
+                ty = "int64_t";
+            } else {
+                ty = inferred_ty;
+            }
         }
         return str_concat("    ", str_concat(ty,
             str_concat(" ", str_concat(name,
