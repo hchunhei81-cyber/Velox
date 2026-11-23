@@ -61,7 +61,12 @@ static velox_str velox_read_file(velox_str path) {
     size_t count = fread(buffer, 1, (size_t)size, file);
     bool failed = count != (size_t)size || ferror(file);
     fclose(file);
-    if (failed) velox_runtime_fail("failed to read input file");
+    if (failed) {
+        fprintf(stderr,
+            "READ_FILE DEBUG: path=[%s], expected=%ld, actual=%zu, ferror=%d\\n",
+            path, size, count, ferror(file));
+        velox_runtime_fail("failed to read input file");
+    }
     if (memchr(buffer, '\0', count))
         velox_runtime_fail("input file contains an embedded NUL byte");
     buffer[count] = '\0';
