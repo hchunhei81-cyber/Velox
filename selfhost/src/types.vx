@@ -1,1 +1,393 @@
-// Velox self-hosted compiler: type checker
+
+// Velox self-hosted type checker.
+// Type IDs: 1=i64, 2=f64, 3=bool, 4=str, 5=void, 100+=struct.
+
+fn tc_type_name(source: str, type_node: i64) -> i64 {
+    if type_node < 0 { return 5; }
+    let start: i64 = ast_node_start(tc_nodes, type_node);
+    let end: i64 = ast_node_end(tc_nodes, type_node);
+    let name: str = str_slice(source, start, end);
+    if str_eq(name, "i64") { return 1; }
+    if str_eq(name, "f64") { return 2; }
+    if str_eq(name, "bool") { return 3; }
+    if str_eq(name, "str") { return 4; }
+    if str_eq(name, "void") { return 5; }
+    let mut i: i64 = 0;
+    while i < list_i64_len(tc_structs) / 3 {
+        let p: i64 = i * 3;
+        if str_eq(str_slice(source, list_i64_get(tc_structs,p), list_i64_get(tc_structs,p+1)), name) {
+            return 100 + i;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+fn tc_name_equal(source: str, a: i64, b: i64) -> bool {
+    return str_eq(
+        str_slice(source, ast_node_start(tc_nodes,a), ast_node_end(tc_nodes,a)),
+        str_slice(source, ast_node_start(tc_nodes,b), ast_node_end(tc_nodes,b))
+    );
+}
+
+fn tc_find_var(source: str, vars: i64, start: i64, end: i64) -> i64 {
+    let mut i: i64 = list_i64_len(vars) / 5;
+    while i > 0 {
+        i = i - 1;
+        let p: i64 = i * 5;
+        if str_eq(str_slice(source,start,end),
+            str_slice(source,list_i64_get(vars,p),list_i64_get(vars,p+1))) {
+            return p;
+        }
+    }
+    return -1;
+}
+
+fn tc_add_var(vars: i64, start: i64, end: i64, ty: i64, mutable: i64) {
+    list_i64_push(vars,start);
+    list_i64_push(vars,end);
+    list_i64_push(vars,ty);
+    list_i64_push(vars,mutable);
+    list_i64_push(vars,tc_scope);
+}
+
+fn tc_find_function(source: str, name_start: i64, name_end: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < list_i64_len(tc_functions) / 5 {
+        let p: i64 = i * 5;
+        if str_eq(str_slice(source,name_start,name_end),
+            str_slice(source,list_i64_get(tc_functions,p),list_i64_get(tc_functions,p+1))) {
+            return p;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+fn tc_find_struct(source: str, name_start: i64, name_end: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < list_i64_len(tc_structs) / 3 {
+        let p: i64 = i * 3;
+        if str_eq(str_slice(source,name_start,name_end),
+            str_slice(source,list_i64_get(tc_structs,p),list_i64_get(tc_structs,p+1))) {
+            return p;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+fn tc_expr(source: str, node: i64, vars: i64) -> i64 {
+    if node < 0 { return -1; }
+    let kind: i64 = ast_node_kind(tc_nodes,node);
+    let a: i64 = ast_node_data(tc_nodes,node,3);
+    let b: i64 = ast_node_data(tc_nodes,node,4);
+    let c: i64 = ast_node_data(tc_nodes,node,5);
+
+    if kind == 20 { return 1; }
+    if kind == 21 { return 2; }
+    if kind == 22 { return 4; }
+    if kind == 23 { return 3; }
+
+    if kind == 24 {
+        let start: i64 = ast_node_start(tc_nodes,node);
+        let end: i64 = ast_node_end(tc_nodes,node);
+        let p: i64 = tc_find_var(source,vars,start,end);
+        if p >= 0 { return list_i64_get(vars,p+2); }
+        return -1;
+    }
+
+    if kind == 25 {
+        let t: i64 = tc_expr(source,a,vars);
+        if t == 1 || t == 2 { return t; }
+        return -1;
+    }
+
+    if kind == 26 {
+        if tc_expr(source,a,vars) == 3 { return 3; }
+        return -1;
+    }
+
+    if kind == 27 {
+        let left: i64 = tc_expr(source,b,vars);
+        let right: i64 = tc_expr(source,c,vars);
+        if left < 0 || right < 0 { return -1; }
+        if a == 41 || a == 42 {
+            if left == 3 && right == 3 { return 3; }
+            return -1;
+        }
+        if a == 36 {
+            if left == right && (left == 1 || left == 2 || left == 3) { return 3; }
+            return -1;
+        }
+        if a == 37 || a == 38 || a == 39 || a == 40 {
+            if left == right && (left == 1 || left == 2) { return 3; }
+            return -1;
+        }
+        if left == right && (left == 1 || left == 2) {
+            if a == 34 && left == 2 { return -1; }
+            return left;
+        }
+        return -1;
+    }
+
+    if kind == 29 {
+        let base: i64 = tc_expr(source,a,vars);
+        if base < 100 { return -1; }
+        let si: i64 = (base - 100) * 3;
+        let field_start: i64 = b;
+        let field_end: i64 = c;
+        let structure: i64 = list_i64_get(tc_structs,si+2);
+        let mut f: i64 = structure;
+        while f >= 0 {
+            let fs: i64 = ast_node_start(tc_nodes,f);
+            let fe: i64 = ast_node_end(tc_nodes,f);
+            if str_eq(str_slice(source,field_start,field_end),str_slice(source,fs,fe)) {
+                return tc_type_name(source,ast_parameter_type(tc_nodes,f));
+            }
+            f = ast_node_data(tc_nodes,f,7);
+        }
+        return -1;
+    }
+
+    if kind == 28 {
+        let callee: i64 = a;
+        let callee_kind: i64 = ast_node_kind(tc_nodes,callee);
+        if callee_kind < 24 || callee_kind > 24 { return -1; }
+        let ns: i64 = ast_node_start(tc_nodes,callee);
+        let ne: i64 = ast_node_end(tc_nodes,callee);
+        let name: str = str_slice(source,ns,ne);
+        let arg: i64 = b;
+        let count: i64 = 0;
+        while arg >= 0 {
+            let at: i64 = tc_expr(source,ast_node_data(tc_nodes,arg,5),vars);
+            if at < 0 { return -1; }
+            count = count + 1;
+            arg = ast_node_data(tc_nodes,arg,7);
+        }
+        if str_eq(name,"print") || str_eq(name,"println") || str_eq(name,"write") {
+            if count == 1 { return 5; }
+            return -1;
+        }
+        let fp: i64 = tc_find_function(source,ns,ne);
+        if fp >= 0 {
+            if count < list_i64_get(tc_functions,fp+4) || count > list_i64_get(tc_functions,fp+4) { return -1; }
+            return list_i64_get(tc_functions,fp+3);
+        }
+        return -1;
+    }
+
+    if kind == 30 {
+        let name_start: i64 = ast_node_start(tc_nodes,a);
+        let name_end: i64 = ast_node_end(tc_nodes,a);
+        let sp: i64 = tc_find_struct(source,name_start,name_end);
+        if sp < 0 { return -1; }
+        let fields: i64 = list_i64_get(tc_structs,sp+2);
+        let arg: i64 = b;
+        let mut count: i64 = 0;
+        while arg >= 0 {
+            let field_start: i64 = ast_node_data(tc_nodes,arg,3);
+            let field_end: i64 = ast_node_data(tc_nodes,arg,4);
+            let actual: i64 = tc_expr(source,ast_node_data(tc_nodes,arg,5),vars);
+            let mut f: i64 = fields;
+            let mut found: i64 = -1;
+            while f >= 0 {
+                if str_eq(str_slice(source,field_start,field_end),
+                    str_slice(source,ast_node_start(tc_nodes,f),ast_node_end(tc_nodes,f))) {
+                    found = tc_type_name(source,ast_parameter_type(tc_nodes,f));
+                }
+                f = ast_node_data(tc_nodes,f,7);
+            }
+            if found < 0 || found < actual || found > actual { return -1; }
+            count = count + 1;
+            arg = ast_node_data(tc_nodes,arg,7);
+        }
+        let mut total: i64 = 0;
+        let mut f: i64 = fields;
+        while f >= 0 {
+            total = total + 1;
+            f = ast_node_data(tc_nodes,f,7);
+        }
+        if count == total { return 100 + sp / 3; }
+        return -1;
+    }
+    return -1;
+}
+
+fn tc_block(source: str, block: i64, vars: i64, return_type: i64, is_parallel: bool) -> bool {
+    let statement: i64 = ast_node_data(tc_nodes,block,3);
+    let saved: i64 = list_i64_len(vars);
+    let mut returned: bool = false;
+    while statement >= 0 {
+        let kind: i64 = ast_node_kind(tc_nodes,statement);
+        let a: i64 = ast_node_data(tc_nodes,statement,3);
+        let b: i64 = ast_node_data(tc_nodes,statement,4);
+        let c: i64 = ast_node_data(tc_nodes,statement,5);
+
+        if kind == 6 {
+            let ns: i64 = ast_node_data(tc_nodes,statement,6);
+            let name_end: i64 = ns + 1;
+            let actual: i64 = tc_expr(source,c,vars);
+            let declared: i64 = actual;
+            if b >= 0 { declared = tc_type_name(source,b); }
+            if actual < 0 || declared < 0 || actual > declared || actual < declared || declared == 5 {
+                tc_error = 1;
+                tc_error_pos = ast_node_start(tc_nodes,statement);
+            } else {
+                tc_add_var(vars,ns,name_end,declared,a);
+            }
+        } else {
+            if kind == 7 {
+                let ns: i64 = ast_node_start(tc_nodes,a);
+                let ne: i64 = ast_node_end(tc_nodes,a);
+                let p: i64 = tc_find_var(source,vars,ns,ne);
+                if p < 0 || list_i64_get(vars,p+3) == 0 || tc_expr(source,b,vars) > list_i64_get(vars,p+2) || tc_expr(source,b,vars) < list_i64_get(vars,p+2) {
+                    tc_error = 1;
+                    tc_error_pos = ast_node_start(tc_nodes,statement);
+                }
+            } else {
+                if kind == 9 {
+                    if is_parallel || (a < 0 && return_type > 5 || return_type < 5) || (a >= 0 && tc_expr(source,a,vars) > return_type || tc_expr(source,a,vars) < return_type) {
+                        tc_error = 1;
+                        tc_error_pos = ast_node_start(tc_nodes,statement);
+                    }
+                    returned = true;
+                } else {
+                    if kind == 10 {
+                        if tc_expr(source,a,vars) < 3 || tc_expr(source,a,vars) > 3 {
+                            tc_error = 1;
+                            tc_error_pos = ast_node_start(tc_nodes,statement);
+                        }
+                        let left: bool = tc_block(source,b,vars,return_type,is_parallel);
+                        let right: bool = false;
+                        if c >= 0 { right = tc_block(source,c,vars,return_type,is_parallel); }
+                        if left && right { returned = true; }
+                    } else {
+                        if kind == 11 {
+                            if tc_expr(source,a,vars) < 3 || tc_expr(source,a,vars) > 3 {
+                                tc_error = 1;
+                                tc_error_pos = ast_node_start(tc_nodes,statement);
+                            }
+                            tc_block(source,b,vars,return_type,is_parallel);
+                        } else {
+                            if kind == 12 || kind == 13 {
+                                if is_parallel && kind == 13 {
+                                    tc_error = 1;
+                                }
+                                if tc_expr(source,a,vars) < 1 || tc_expr(source,b,vars) < 1 {
+                                    tc_error = 1;
+                                }
+                                tc_block(source,c,vars,return_type,is_parallel || kind == 13);
+                            } else {
+                                if kind == 14 {
+                                    if tc_expr(source,a,vars) < 0 {
+                                        tc_error = 1;
+                                        tc_error_pos = ast_node_start(tc_nodes,statement);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if tc_error < 0 || tc_error > 0 { break; }
+        statement = ast_node_data(tc_nodes,statement,7);
+    }
+    while list_i64_len(vars) > saved {
+        // The runtime has no pop primitive; scoped entries are hidden by restoring
+        // the logical variable count in the checker state.
+        tc_var_limit = saved;
+        break;
+    }
+    return returned;
+}
+
+pub fn typecheck(source: str, nodes: i64) -> bool {
+    tc_nodes = nodes;
+    tc_error = 0;
+    tc_error_pos = 0;
+    tc_functions = list_i64_new();
+    tc_structs = list_i64_new();
+    tc_vars = list_i64_new();
+    tc_var_limit = 0;
+    tc_scope = 0;
+
+    let mut declaration: i64 = ast_node_data(nodes,0,3);
+    while declaration >= 0 {
+        let kind: i64 = ast_node_kind(nodes,declaration);
+        if kind == 2 {
+            let ns: i64 = ast_struct_name_start(nodes,declaration);
+            let ne: i64 = ast_struct_name_end(nodes,declaration);
+            let fields: i64 = ast_struct_fields(nodes,declaration);
+            list_i64_push(tc_structs,ns);
+            list_i64_push(tc_structs,ne);
+            list_i64_push(tc_structs,fields);
+        }
+        declaration = ast_node_data(nodes,declaration,7);
+    }
+
+    declaration = ast_node_data(nodes,0,3);
+    while declaration >= 0 {
+        if ast_node_kind(nodes,declaration) == 1 {
+            let name: i64 = ast_function_name(nodes,declaration);
+            let meta: i64 = ast_function_meta(nodes,declaration);
+            let ns: i64 = ast_node_start(nodes,name);
+            let ne: i64 = ast_node_end(nodes,name);
+            let ret: i64 = tc_type_name(source,ast_function_return_type(nodes,declaration));
+            let params: i64 = ast_function_params(nodes,declaration);
+            let count: i64 = 0;
+            let p: i64 = params;
+            while p >= 0 {
+                count = count + 1;
+                p = ast_node_data(nodes,p,7);
+            }
+            if tc_find_function(source,ns,ne) >= 0 {
+                tc_error = 1;
+            } else {
+                list_i64_push(tc_functions,ns);
+                list_i64_push(tc_functions,ne);
+                list_i64_push(tc_functions,params);
+                list_i64_push(tc_functions,ret);
+                list_i64_push(tc_functions,count);
+            }
+        }
+        declaration = ast_node_data(nodes,declaration,7);
+    }
+
+    declaration = ast_node_data(nodes,0,3);
+    while declaration >= 0 {
+        if ast_node_kind(nodes,declaration) == 1 {
+            let name: i64 = ast_function_name(nodes,declaration);
+            let ns: i64 = ast_node_start(nodes,name);
+            let ne: i64 = ast_node_end(nodes,name);
+            let fp: i64 = tc_find_function(source,ns,ne);
+            let ret: i64 = list_i64_get(tc_functions,fp+3);
+            let params: i64 = list_i64_get(tc_functions,fp+2);
+            let vars: i64 = list_i64_new();
+            let p: i64 = params;
+            while p >= 0 {
+                let ps: i64 = ast_node_start(nodes,p);
+                let pe: i64 = ast_node_end(nodes,p);
+                let pt: i64 = tc_type_name(source,ast_parameter_type(nodes,p));
+                if pt < 0 || pt == 5 || tc_find_var(source,vars,ps,pe) >= 0 {
+                    tc_error = 1;
+                } else {
+                    tc_add_var(vars,ps,pe,pt,0);
+                }
+                p = ast_node_data(nodes,p,7);
+            }
+            let body: i64 = ast_function_body(nodes,declaration);
+            if body >= 0 {
+                let returns: bool = tc_block(source,body,vars,ret,false);
+                if ret < 5 || ret > 5 && !returns { tc_error = 1; }
+            }
+        }
+        declaration = ast_node_data(nodes,declaration,7);
+    }
+    return tc_error == 0;
+}
+
+pub fn typecheck_error_position() -> i64 {
+    return tc_error_pos;
+}

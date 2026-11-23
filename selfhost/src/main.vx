@@ -2,6 +2,8 @@ using "lexer.vx";
 using "ast.vx";
 using "parser.vx";
 
+using "types.vx";
+
 fn main() {
     let source: str =
         "pub struct Point { x: i64, y: i64 } fn add(a: i64, b: i64) -> i64 { return a + b; } fn main() { let point: Point = Point(x: 10, y: 20,); let point2: Point = Point { x: 1, y: 2, }; let answer: i64 = add(20, 22); if answer > 0 { println(answer); } else { println(0); } while answer > 1 { let mut x: i64 = answer - 1; } for i in 0..10 { println(i); } }";
@@ -46,4 +48,14 @@ fn main() {
     }
 
     println("Parser verification: PASSED");
+
+    println("Stage 1: Type Checker");
+    if typecheck(source, nodes) {
+        println("Type checker verification: PASSED");
+    } else {
+        println("Type checker verification: FAILED");
+        println("Error byte position:");
+        println(typecheck_error_position());
+        return;
+    }
 }
