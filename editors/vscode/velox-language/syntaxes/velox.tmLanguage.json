@@ -146,7 +146,7 @@
       "patterns": [
         {
           "name": "entity.name.type.velox",
-          "match": "\\b[A-Z][A-Za-z0-9_]*(?=\\s*\\{)"
+          "match": "\\b[A-Z][A-Za-z0-9_]*(?=\\s*(?:\\{|\\())"
         }
       ]
     },
@@ -182,7 +182,7 @@
       "patterns": [
         {
           "name": "support.function.builtin.velox",
-          "match": "\\\\b(print|println|write)\\\\b(?=\\\\s*\\\\()"
+          "match": "\\b(print|println|write)\\b(?=\\s*\\()"
         }
       ]
     },
@@ -190,11 +190,11 @@
       "patterns": [
         {
           "name": "keyword.control.velox",
-          "match": "\\\\b(fn|let|mut|if|else|while|for|in|return|parallel|struct|import|python)\\\\b"
+          "match": "\\b(fn|let|mut|if|else|while|for|in|return|parallel|struct|import|pub|export)\\b"
         },
         {
           "name": "storage.modifier.velox",
-          "match": "\\b(public|private|export)\\b"
+          "match": "\\b(pub|export)\\b"
         }
       ]
     },
@@ -242,19 +242,19 @@
       "patterns": [
         {
           "name": "meta.import.velox",
-          "match": "\\\\b(import)\\\\s+(python)\\\\b",
+          "match": "\\b(import)\\s+([A-Za-z_][A-Za-z0-9_]*)\\b",
           "captures": {
             "1": {
               "name": "keyword.control.import.velox"
             },
             "2": {
-              "name": "storage.type.velox"
+              "name": "support.module.velox"
             }
           }
         },
         {
           "name": "support.module.velox",
-          "match": "\\\\bpy\\\\b"
+          "match": "\\bpy\\b"
         }
       ]
     }

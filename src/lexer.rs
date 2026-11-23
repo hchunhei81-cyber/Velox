@@ -18,7 +18,6 @@ pub enum Tok {
     False,
     Parallel,
     Public,
-    Private,
     Export,
     LParen,
     RParen,
@@ -177,8 +176,7 @@ impl<'a> Lexer<'a> {
                     "true" => Tok::True,
                     "false" => Tok::False,
                     "parallel" => Tok::Parallel,
-                    "public" => Tok::Public,
-                    "private" => Tok::Private,
+                    "pub" => Tok::Public,
                     "export" => Tok::Export,
                     _ => Tok::Ident(s),
                 };
@@ -402,5 +400,20 @@ mod comment_tests {
         assert!(tokens
             .iter()
             .any(|t| matches!(t, Tok::Str(s) if s == "/* text */")));
+    }
+}
+
+#[cfg(test)]
+mod syntax_keyword_tests {
+    use super::*;
+
+    #[test]
+    fn pub_is_keyword_and_old_visibility_words_are_identifiers() {
+        let tokens = Lexer::new("pub fn visible() {} public private")
+            .tokenize()
+            .unwrap();
+        assert!(tokens.contains(&Tok::Public));
+        assert!(tokens.contains(&Tok::Ident("public".into())));
+        assert!(tokens.contains(&Tok::Ident("private".into())));
     }
 }

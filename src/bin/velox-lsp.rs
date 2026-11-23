@@ -543,7 +543,7 @@ fn completion(source: &str, offset: usize) -> Value {
 
     for keyword in [
         "fn", "struct", "let", "mut", "return", "if", "else", "while", "for", "in", "true",
-        "false", "parallel", "public", "private", "export", "import", "python",
+        "false", "parallel", "pub", "export", "import",
     ] {
         if !items.iter().any(|item| item["label"] == keyword) {
             items.push(json!({
@@ -577,7 +577,6 @@ fn semantic_tokens(source: &str) -> Value {
 
         let text = &source[token.span.start..token.span.end];
         let previous = index.checked_sub(1).and_then(|i| tokens.get(i));
-        let previous2 = index.checked_sub(2).and_then(|i| tokens.get(i));
         let next = tokens.get(index + 1);
 
         let token_type = match &token.kind {
@@ -593,7 +592,6 @@ fn semantic_tokens(source: &str) -> Value {
             | Tok::In
             | Tok::Parallel
             | Tok::Public
-            | Tok::Private
             | Tok::Export => Some(9),
 
             Tok::True | Tok::False => Some(10),
@@ -620,13 +618,8 @@ fn semantic_tokens(source: &str) -> Value {
             Tok::Ident(name) => {
                 if name == "import" {
                     Some(9)
-                } else if name == "python"
-                    && previous.is_some_and(|p| matches!(&p.kind, Tok::Ident(s) if s == "import"))
-                {
-                    Some(9)
                 } else if previous
-                    .is_some_and(|p| matches!(&p.kind, Tok::Ident(s) if s == "python"))
-                    && previous2.is_some_and(|p| matches!(&p.kind, Tok::Ident(s) if s == "import"))
+                    .is_some_and(|p| matches!(&p.kind, Tok::Ident(s) if s == "import"))
                 {
                     Some(0)
                 } else if name == "py" {
@@ -1072,13 +1065,16 @@ fn main() -> void {
 
         for keyword in [
             "fn", "struct", "let", "mut", "return", "if", "else", "while", "for", "in", "parallel",
-            "public", "private", "export", "import", "python",
+            "pub", "export", "import",
         ] {
             assert!(
                 labels.iter().any(|label| label == keyword),
                 "missing keyword completion: {keyword}"
             );
         }
+        assert!(!labels.iter().any(|label| label == "python"));
+        assert!(!labels.iter().any(|label| label == "public"));
+        assert!(!labels.iter().any(|label| label == "private"));
     }
 
     #[test]
@@ -1102,8 +1098,8 @@ fn main() -> void {
     }
 
     #[test]
-    fn semantic_tokens_support_python_imports() {
-        let source = "import python math; fn main() -> void { let x: f64 = py.math.sqrt(9.0); }";
+    fn semantic_tokens_support_short_python_imports() {
+        let source = "import math; fn main() { let x: f64 = py.math.sqrt(9.0); }";
         let result = semantic_tokens(source);
         let data = result["data"].as_array().unwrap();
 

@@ -119,13 +119,6 @@ impl Parser {
         while *self.peek() != Tok::Eof {
             if matches!(self.peek(), Tok::Ident(s) if s == "import") {
                 self.bump();
-                let kind = self.ident()?;
-                if kind != "python" {
-                    return Err(format!(
-                        "unsupported import kind `{}`; expected `python`",
-                        kind
-                    ));
-                }
                 let module = self.ident()?;
                 if python_imports.contains(&module) {
                     return Err(format!(
@@ -137,15 +130,11 @@ impl Parser {
                 self.eat(&Tok::Semi)?;
                 continue;
             }
-            let start_pos = self.pos;
+
             let vis = match self.peek() {
                 Tok::Public => {
                     self.bump();
                     Vis::Public
-                }
-                Tok::Private => {
-                    self.bump();
-                    Vis::Private
                 }
                 Tok::Export => {
                     self.bump();
@@ -153,6 +142,7 @@ impl Parser {
                 }
                 _ => Vis::Private,
             };
+
             if *self.peek() == Tok::Struct {
                 self.bump();
                 let name = self.ident()?;
@@ -177,9 +167,7 @@ impl Parser {
                     fields,
                 });
             } else {
-                // fn_def consumes its own visibility modifier.
-                self.pos = start_pos;
-                fns.push(self.fn_def()?);
+                fns.push(self.fn_def(vis)?);
             }
         }
         Ok(Program {
@@ -189,22 +177,7 @@ impl Parser {
         })
     }
 
-    fn fn_def(&mut self) -> Result<FnDef, String> {
-        let vis = match self.peek() {
-            Tok::Public => {
-                self.bump();
-                Vis::Public
-            }
-            Tok::Private => {
-                self.bump();
-                Vis::Private
-            }
-            Tok::Export => {
-                self.bump();
-                Vis::Export
-            }
-            _ => Vis::Private,
-        };
+    fn fn_def(&mut self, vis: Vis) -> Result<FnDef, String> {
         self.eat(&Tok::Fn)?;
         let name = self.ident()?;
         self.eat(&Tok::LParen)?;
@@ -223,8 +196,12 @@ impl Parser {
             }
         }
         self.eat(&Tok::RParen)?;
-        self.eat(&Tok::Arrow)?;
-        let ret = self.ty()?;
+        let ret = if *self.peek() == Tok::Arrow {
+            self.bump();
+            self.ty()?
+        } else {
+            Ty::Void
+        };
         let body = self.block()?;
         Ok(FnDef {
             name,
@@ -485,6 +462,28 @@ impl Parser {
         Ok(e)
     }
 
+    fn named_fields(&mut self, close: Tok) -> Result<Vec<(String, Expr)>, String> {
+        let mut fields = Vec::new();
+        if *self.peek() != close {
+            loop {
+                let field = self.ident()?;
+                self.eat(&Tok::Colon)?;
+                let value = self.expr()?;
+                fields.push((field, value));
+                if *self.peek() == Tok::Comma {
+                    self.bump();
+                    if *self.peek() == close {
+                        break;
+                    }
+                } else {
+                    break;
+                }
+            }
+        }
+        self.eat(&close)?;
+        Ok(fields)
+    }
+
     fn atom(&mut self) -> Result<Expr, String> {
         let token = self.bump();
         let token_span = self.last_span.unwrap_or_default();
@@ -528,6 +527,24 @@ impl Parser {
                 }
                 if *self.peek() == Tok::LParen {
                     self.bump();
+                    let is_named_init = matches!(self.peek(), Tok::Ident(_))
+                        && self
+                            .toks
+                            .get(self.pos + 1)
+                            .is_some_and(|token| token.kind == Tok::Colon);
+                    if is_named_init {
+                        let fields = self.named_fields(Tok::RParen)?;
+                        let end = self.last_span.unwrap_or(token_span).end;
+                        let init = Expr::StructInit(name, fields);
+                        return Ok(located(
+                            located(init, token_span),
+                            Span {
+                                start: token_span.start,
+                                end,
+                            },
+                        ));
+                    }
+
                     let mut args = Vec::new();
                     if *self.peek() != Tok::RParen {
                         loop {
@@ -551,21 +568,7 @@ impl Parser {
                     ))
                 } else if *self.peek() == Tok::LBrace && self.condition_depth == 0 {
                     self.bump();
-                    let mut fields = Vec::new();
-                    if *self.peek() != Tok::RBrace {
-                        loop {
-                            let field = self.ident()?;
-                            self.eat(&Tok::Colon)?;
-                            let value = self.expr()?;
-                            fields.push((field, value));
-                            if *self.peek() == Tok::Comma {
-                                self.bump();
-                            } else {
-                                break;
-                            }
-                        }
-                    }
-                    self.eat(&Tok::RBrace)?;
+                    let fields = self.named_fields(Tok::RBrace)?;
                     let end = self.last_span.unwrap_or(token_span).end;
                     let init = Expr::StructInit(name, fields);
                     Ok(located(
@@ -619,4 +622,79 @@ fn strip_located(mut expr: &Expr) -> &Expr {
         expr = inner;
     }
     expr
+}
+
+#[cfg(test)]
+mod syntax_round_one_tests {
+    use super::*;
+    use crate::lexer::Lexer;
+
+    fn parse(source: &str) -> Program {
+        let tokens = Lexer::new(source).tokenize_spanned().unwrap();
+        Parser::new_spanned(tokens).program().unwrap()
+    }
+
+    #[test]
+    fn supports_short_python_imports() {
+        let program = parse("import math; import time; fn main() {}");
+        assert_eq!(program.python_imports, vec!["math", "time"]);
+    }
+
+    #[test]
+    fn rejects_legacy_python_import_spelling() {
+        let tokens = Lexer::new("import python math; fn main() {}")
+            .tokenize_spanned()
+            .unwrap();
+        let result = Parser::new_spanned(tokens).program();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn supports_pub_and_default_private_visibility() {
+        let program = parse(
+            r#"pub struct PublicType { value: i64 }
+               struct LocalType { value: i64 }
+               pub fn exposed() {}
+               fn internal() {}"#,
+        );
+        assert_eq!(program.structs[0].vis, Vis::Public);
+        assert_eq!(program.structs[1].vis, Vis::Private);
+        assert_eq!(program.fns[0].vis, Vis::Public);
+        assert_eq!(program.fns[1].vis, Vis::Private);
+    }
+
+    #[test]
+    fn omitted_function_return_type_means_void() {
+        let program = parse("fn simple() {} fn explicit() -> void {}");
+        assert_eq!(program.fns[0].ret, Ty::Void);
+        assert_eq!(program.fns[1].ret, Ty::Void);
+    }
+
+    #[test]
+    fn supports_call_and_brace_struct_initializers() {
+        let program = parse(
+            r#"struct User { name: str, age: i64 }
+               fn main() {
+                   let first = User(name: "Alice", age: 20);
+                   let second = User { name: "Bob", age: 30 };
+               }"#,
+        );
+
+        let body = &program.fns[0].body;
+        let Stmt::Let { init: first, .. } = &body[0] else {
+            panic!("expected first let");
+        };
+        let Stmt::Let { init: second, .. } = &body[1] else {
+            panic!("expected second let");
+        };
+
+        assert!(matches!(
+            strip_located(first),
+            Expr::StructInit(name, _) if name == "User"
+        ));
+        assert!(matches!(
+            strip_located(second),
+            Expr::StructInit(name, _) if name == "User"
+        ));
+    }
 }

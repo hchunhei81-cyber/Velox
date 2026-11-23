@@ -50,7 +50,7 @@ Alternatively, use **Extensions: Install from VSIX...** after packaging the exte
 | `while` | While loop |
 | `pfor` | Parallel for loop |
 | `pr` / `pln` | Print |
-| `using` | Import source file |
+| `pyimport` / `pycall` | Python module import and call |
 
 ## Current limitations
 

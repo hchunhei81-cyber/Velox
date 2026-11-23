@@ -5,7 +5,7 @@
       "func"
     ],
     "body": [
-      "fn ${1:name}(${2}) -> ${3:void} {",
+      "fn ${1:name}(${2}) {",
       "    $0",
       "}"
     ],
@@ -14,7 +14,7 @@
   "Public Function": {
     "prefix": "pubfn",
     "body": [
-      "public fn ${1:name}(${2}) -> ${3:void} {",
+      "pub fn ${1:name}(${2}) {",
       "    $0",
       "}"
     ],
@@ -23,7 +23,7 @@
   "Main": {
     "prefix": "main",
     "body": [
-      "fn main() -> void {",
+      "fn main() {",
       "    $0",
       "}"
     ],
@@ -46,7 +46,7 @@
   "Public Struct": {
     "prefix": "pubstruct",
     "body": [
-      "public struct ${1:Point} {",
+      "pub struct ${1:Point} {",
       "    ${2:x}: ${3:f64},",
       "}",
       "$0"
@@ -56,10 +56,7 @@
   "Struct Literal": {
     "prefix": "newstruct",
     "body": [
-      "${1:Point} {",
-      "    ${2:x}: ${3:0.0},",
-      "    ${4:y}: ${5:0.0},",
-      "}"
+      "${1:Point}(${2:x}: ${3:0.0}, ${4:y}: ${5:0.0})"
     ],
     "description": "Initialize a struct value"
   },
@@ -159,7 +156,7 @@
   "Python Import": {
     "prefix": "pyimport",
     "body": [
-      "import python ${1:math};"
+      "import ${1:math};"
     ],
     "description": "Import a Python module"
   },
