@@ -57,3 +57,6 @@ _fast_math.py
 # VS Code extension dependencies
 /editors/vscode/velox-language/node_modules/
 veloxc
+
+# Selfhost local executable
+/selfhost/src/main
