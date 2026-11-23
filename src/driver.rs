@@ -45,17 +45,56 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-pub fn compile(src_path: &str, out: &str) -> Result<(), String> {
-    // Remove stale build artifacts before compilation to prevent accidentally running an old binary.
-    let output_path = Path::new(out);
-    if output_path.exists() {
-        fs::remove_file(output_path)
-            .map_err(|e| format!("failed to remove previous output `{}`: {}", out, e))?;
+// Merge declarations from multiple headers before type checking and codegen.
+// Identical declarations share one C symbol; incompatible ABI declarations fail.
+fn merge_extern_fn(functions: &mut Vec<FnDef>, candidate: FnDef) -> Result<(), String> {
+    if let Some(existing) = functions.iter().find(|f| f.name == candidate.name) {
+        let same_params = existing.params.len() == candidate.params.len()
+            && existing
+                .params
+                .iter()
+                .zip(&candidate.params)
+                .all(|((_, a), (_, b))| a == b);
+        let same_signature = same_params && existing.ret == candidate.ret;
+
+        if same_signature {
+            return Ok(());
+        }
+
+        return Err(format!(
+            "E0203: conflicting declarations for extern function `{}` in `{}` and `{}`",
+            candidate.name, existing.origin, candidate.origin
+        ));
     }
+
+    functions.push(candidate);
+    Ok(())
+}
+
+pub fn compile(src_path: &str, out: &str) -> Result<(), String> {
+    let output_path = Path::new(out);
 
     let mut visited = HashSet::new();
     let mut active = HashSet::new();
     let (vx_files, h_files) = collect_files(Path::new(src_path), &mut visited, &mut active)?;
+
+    // Never allow the executable output to overwrite a source or header file.
+    if let Ok(output_canonical) = output_path.canonicalize() {
+        for input in vx_files.iter().chain(h_files.iter()) {
+            if input.canonicalize().ok().as_ref() == Some(&output_canonical) {
+                return Err(format!(
+                    "E0204: output path `{}` conflicts with an input file",
+                    out
+                ));
+            }
+        }
+    }
+
+    // Remove stale output only after verifying it cannot overwrite an input.
+    if output_path.exists() {
+        fs::remove_file(output_path)
+            .map_err(|e| format!("failed to remove previous output `{}`: {}", out, e))?;
+    }
 
     // 1. Parse .vx source files
     let mut vx_fns = Vec::new();
@@ -85,20 +124,23 @@ pub fn compile(src_path: &str, out: &str) -> Result<(), String> {
     for h in &h_files {
         let raw = ffi::extract_functions(h)?;
         for f in raw {
-            extern_fns.push(FnDef {
-                name: f.name,
-                vis: Vis::Export,
-                origin: h.to_string_lossy().to_string(),
-                is_extern: true,
-                params: f
-                    .params
-                    .iter()
-                    .enumerate()
-                    .map(|(i, t)| (format!("a{}", i), t.clone()))
-                    .collect(),
-                ret: f.ret,
-                body: Vec::new(),
-            });
+            merge_extern_fn(
+                &mut extern_fns,
+                FnDef {
+                    name: f.name,
+                    vis: Vis::Export,
+                    origin: h.to_string_lossy().to_string(),
+                    is_extern: true,
+                    params: f
+                        .params
+                        .iter()
+                        .enumerate()
+                        .map(|(i, t)| (format!("a{}", i), t.clone()))
+                        .collect(),
+                    ret: f.ret,
+                    body: Vec::new(),
+                },
+            )?;
         }
     }
 
@@ -144,8 +186,8 @@ pub fn compile(src_path: &str, out: &str) -> Result<(), String> {
         cmd.arg("-Wno-unknown-pragmas");
     }
     for h in &h_files {
-        if let Some(name) = h.file_name().and_then(|s| s.to_str()) {
-            if let Some(lib) = ffi::lib_for_header(name) {
+        if h.file_name().is_some() {
+            if let Some(lib) = ffi::lib_for_header(h) {
                 cmd.arg(format!("-l{}", lib));
             }
         }
@@ -210,20 +252,23 @@ pub fn compile_py(src_path: &str, out_dir: &str) -> Result<(), String> {
     for h in &h_files {
         let raw = ffi::extract_functions(h)?;
         for f in raw {
-            extern_fns.push(FnDef {
-                name: f.name,
-                vis: Vis::Export,
-                origin: h.to_string_lossy().to_string(),
-                is_extern: true,
-                params: f
-                    .params
-                    .iter()
-                    .enumerate()
-                    .map(|(i, t)| (format!("a{}", i), t.clone()))
-                    .collect(),
-                ret: f.ret,
-                body: Vec::new(),
-            });
+            merge_extern_fn(
+                &mut extern_fns,
+                FnDef {
+                    name: f.name,
+                    vis: Vis::Export,
+                    origin: h.to_string_lossy().to_string(),
+                    is_extern: true,
+                    params: f
+                        .params
+                        .iter()
+                        .enumerate()
+                        .map(|(i, t)| (format!("a{}", i), t.clone()))
+                        .collect(),
+                    ret: f.ret,
+                    body: Vec::new(),
+                },
+            )?;
         }
     }
 
@@ -280,17 +325,13 @@ pub fn compile_py(src_path: &str, out_dir: &str) -> Result<(), String> {
         cmd.arg("-Wno-unknown-pragmas");
     }
     for h in &h_files {
-        if let Some(name) = h.file_name().and_then(|s| s.to_str()) {
-            if let Some(lib) = ffi::lib_for_header(name) {
+        if h.file_name().is_some() {
+            if let Some(lib) = ffi::lib_for_header(h) {
                 cmd.arg(format!("-l{}", lib));
             }
         }
     }
-    cmd.args([
-        "-o",
-        libpath.to_str().unwrap(),
-        cfile_path.to_str().unwrap(),
-    ]);
+    cmd.arg("-o").arg(&libpath).arg(&cfile_path);
     let status = cmd
         .status()
         .map_err(|e| format!("clang compilation failed: {}", e))?;
@@ -404,4 +445,68 @@ fn has_openmp() -> bool {
     let _ = fs::remove_file(&test);
     let _ = fs::remove_file(&binary);
     ok
+}
+
+#[cfg(test)]
+mod extern_merge_tests {
+    use super::*;
+    use crate::ast::Ty;
+
+    fn declaration(origin: &str, params: Vec<Ty>, ret: Ty) -> FnDef {
+        FnDef {
+            name: "shared_api".into(),
+            vis: Vis::Export,
+            origin: origin.into(),
+            is_extern: true,
+            params: params
+                .into_iter()
+                .enumerate()
+                .map(|(i, ty)| (format!("a{i}"), ty))
+                .collect(),
+            ret,
+            body: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn identical_extern_declarations_across_headers_are_merged() {
+        let mut functions = Vec::new();
+
+        merge_extern_fn(
+            &mut functions,
+            declaration("first.h", vec![Ty::I64, Ty::Str], Ty::I64),
+        )
+        .unwrap();
+        merge_extern_fn(
+            &mut functions,
+            declaration("second.h", vec![Ty::I64, Ty::Str], Ty::I64),
+        )
+        .unwrap();
+
+        assert_eq!(functions.len(), 1);
+        assert_eq!(functions[0].origin, "first.h");
+    }
+
+    #[test]
+    fn conflicting_extern_declarations_across_headers_are_rejected() {
+        let mut functions = Vec::new();
+
+        merge_extern_fn(
+            &mut functions,
+            declaration("first.h", vec![Ty::I64], Ty::I64),
+        )
+        .unwrap();
+
+        let error = merge_extern_fn(
+            &mut functions,
+            declaration("second.h", vec![Ty::F64], Ty::I64),
+        )
+        .unwrap_err();
+
+        assert!(error.contains("E0203"));
+        assert!(error.contains("shared_api"));
+        assert!(error.contains("first.h"));
+        assert!(error.contains("second.h"));
+        assert_eq!(functions.len(), 1);
+    }
 }

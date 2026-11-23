@@ -28,6 +28,7 @@ Cargo.lock.bak
 
 # Velox codes
 example/
+bootstrap/
 
 # Editor / OS noise
 .DS_Store

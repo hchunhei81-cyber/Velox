@@ -128,6 +128,32 @@ impl Checker {
                 origin: "<builtin>".into(),
             },
         );
+        for (name, params, ret) in [
+            ("read_file", vec![Ty::Str], Ty::Str),
+            ("write_file", vec![Ty::Str, Ty::Str], Ty::Bool),
+            ("str_len", vec![Ty::Str], Ty::I64),
+            ("str_byte_at", vec![Ty::Str, Ty::I64], Ty::I64),
+            ("str_byte_at_fast", vec![Ty::Str, Ty::I64, Ty::I64], Ty::I64),
+            ("str_slice", vec![Ty::Str, Ty::I64, Ty::I64], Ty::Str),
+            ("str_concat", vec![Ty::Str, Ty::Str], Ty::Str),
+            ("str_eq", vec![Ty::Str, Ty::Str], Ty::Bool),
+            ("list_i64_new", vec![], Ty::I64),
+            ("list_i64_push", vec![Ty::I64, Ty::I64], Ty::Void),
+            ("list_i64_get", vec![Ty::I64, Ty::I64], Ty::I64),
+            ("list_i64_set", vec![Ty::I64, Ty::I64, Ty::I64], Ty::Void),
+            ("list_i64_len", vec![Ty::I64], Ty::I64),
+        ] {
+            fns.insert(
+                name.into(),
+                FnInfo {
+                    params,
+                    ret,
+                    vis: Vis::Public,
+                    origin: "<builtin>".into(),
+                },
+            );
+        }
+
         Self {
             fns,
             structs: HashMap::new(),
@@ -779,5 +805,11 @@ impl Checker {
                 Ok(info.ret)
             }
         }
+    }
+}
+
+impl Default for Checker {
+    fn default() -> Self {
+        Self::new()
     }
 }

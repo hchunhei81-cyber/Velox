@@ -826,3 +826,264 @@ fn main() -> void {
     assert!(!build.status.success());
     assert!(stderr(&build).contains("E0308"));
 }
+
+#[test]
+fn ordinary_loop_bound_expression_is_evaluated_once() {
+    let case = Case::new(
+        r#"
+fn get_limit() -> i64 {
+    println("bound");
+    return 3;
+}
+
+fn main() -> void {
+    for i in 0..get_limit() {
+        println(i);
+    }
+}
+"#,
+    );
+
+    let build = case.compile();
+    assert!(build.status.success(), "compile failed: {}", stderr(&build));
+
+    let run = case.run();
+    assert!(run.status.success());
+    assert_eq!(stdout(&run), "bound\n0\n1\n2\n");
+}
+
+#[test]
+fn parallel_loop_bound_expression_is_evaluated_once() {
+    let case = Case::new(
+        r#"
+fn get_limit() -> i64 {
+    println("bound");
+    return 3;
+}
+
+fn main() -> void {
+    parallel for i in 0..get_limit() {
+        let x: i64 = i;
+    }
+}
+"#,
+    );
+
+    let build = case.compile_without_openmp();
+    assert!(build.status.success(), "compile failed: {}", stderr(&build));
+
+    let run = case.run();
+    assert!(run.status.success());
+    assert_eq!(stdout(&run), "bound\n");
+}
+
+#[test]
+fn c_backend_mangles_c_keywords_and_library_identifiers() {
+    let case = Case::new(
+        r#"
+struct switch { default: i64 }
+fn printf() -> i64 { return 41; }
+fn main() -> void {
+    let int = 1;
+    let value = switch(default: printf());
+    println(value.default + int);
+}
+"#,
+    );
+
+    let build = case.compile();
+    assert!(build.status.success(), "compile failed: {}", stderr(&build));
+    let run = case.run();
+    assert!(run.status.success());
+    assert_eq!(stdout(&run), "42\n");
+}
+
+fn assert_i64_runtime_error(source: &str, expected: &str) {
+    let case = Case::new(source);
+
+    let build = case.compile();
+    assert!(
+        build.status.success(),
+        "compile failed unexpectedly: {}",
+        stderr(&build)
+    );
+
+    let run = case.run();
+    assert!(
+        !run.status.success(),
+        "program unexpectedly succeeded; stdout: {}",
+        stdout(&run)
+    );
+
+    assert!(
+        stderr(&run).contains(expected),
+        "expected runtime error {:?}, got stderr: {}",
+        expected,
+        stderr(&run)
+    );
+}
+
+#[test]
+fn i64_addition_overflow_is_reported_at_runtime() {
+    assert_i64_runtime_error(
+        r#"
+fn main() {
+    let max: i64 = 9223372036854775807;
+    let one: i64 = 1;
+    let result: i64 = max + one;
+    print(result);
+}
+"#,
+        "i64 addition overflow",
+    );
+}
+
+#[test]
+fn i64_subtraction_overflow_is_reported_at_runtime() {
+    assert_i64_runtime_error(
+        r#"
+fn main() {
+    let min: i64 = -9223372036854775807 - 1;
+    let one: i64 = 1;
+    let result: i64 = min - one;
+    print(result);
+}
+"#,
+        "i64 subtraction overflow",
+    );
+}
+
+#[test]
+fn i64_multiplication_overflow_is_reported_at_runtime() {
+    assert_i64_runtime_error(
+        r#"
+fn main() {
+    let max: i64 = 9223372036854775807;
+    let two: i64 = 2;
+    let result: i64 = max * two;
+    print(result);
+}
+"#,
+        "i64 multiplication overflow",
+    );
+}
+
+#[test]
+fn i64_division_by_zero_is_reported_at_runtime() {
+    assert_i64_runtime_error(
+        r#"
+fn main() {
+    let one: i64 = 1;
+    let zero: i64 = 0;
+    let result: i64 = one / zero;
+    print(result);
+}
+"#,
+        "i64 division by zero",
+    );
+}
+
+#[test]
+fn i64_min_divided_by_negative_one_is_reported_at_runtime() {
+    assert_i64_runtime_error(
+        r#"
+fn main() {
+    let min: i64 = -9223372036854775807 - 1;
+    let negative_one: i64 = -1;
+    let result: i64 = min / negative_one;
+    print(result);
+}
+"#,
+        "i64 division overflow",
+    );
+}
+
+#[test]
+fn i64_negation_overflow_is_reported_at_runtime() {
+    assert_i64_runtime_error(
+        r#"
+fn main() {
+    let min: i64 = -9223372036854775807 - 1;
+    let result: i64 = -min;
+    print(result);
+}
+"#,
+        "i64 negation overflow",
+    );
+}
+
+#[test]
+fn i64_modulo_by_zero_is_reported_at_runtime() {
+    assert_i64_runtime_error(
+        r#"
+fn main() {
+    let one: i64 = 1;
+    let zero: i64 = 0;
+    let result: i64 = one % zero;
+    print(result);
+}
+"#,
+        "i64 modulo by zero",
+    );
+}
+
+#[test]
+fn i64_min_modulo_negative_one_returns_zero() {
+    let case = Case::new(
+        r#"
+fn main() {
+    let min: i64 = -9223372036854775807 - 1;
+    let negative_one: i64 = -1;
+    print(min % negative_one);
+}
+"#,
+    );
+
+    let build = case.compile();
+    assert!(build.status.success(), "compile failed: {}", stderr(&build));
+
+    let run = case.run();
+    assert!(run.status.success(), "runtime failed: {}", stderr(&run));
+    assert_eq!(stdout(&run).trim(), "0");
+}
+
+#[test]
+fn bootstrap_runtime_strings_files_and_integer_lists_work() {
+    let case = Case::new("");
+    let input = case.root.join("runtime-input.txt");
+    let output = case.root.join("runtime-output.txt");
+    fs::write(&input, "hello").unwrap();
+
+    let input_literal = input.to_str().unwrap();
+    let output_literal = output.to_str().unwrap();
+    let source = format!(
+        r#"
+fn main() {{
+    let content: str = read_file("{}");
+    println(str_len(content));
+    println(str_byte_at(content, 1));
+    let part: str = str_slice(content, 1, 4);
+    let joined: str = str_concat(part, "!");
+    println(joined);
+    println(str_eq(joined, "ell!"));
+    let values: i64 = list_i64_new();
+    list_i64_push(values, 7);
+    list_i64_push(values, 9);
+    println(list_i64_len(values));
+    println(list_i64_get(values, 1));
+    let written: bool = write_file("{}", joined);
+    println(written);
+}}
+"#,
+        input_literal, output_literal
+    );
+    fs::write(&case.source, source).unwrap();
+
+    let build = case.compile();
+    assert!(build.status.success(), "compile failed: {}", stderr(&build));
+
+    let run = case.run();
+    assert!(run.status.success(), "run failed: {}", stderr(&run));
+    assert_eq!(stdout(&run), "5\n101\nell!\ntrue\n2\n9\ntrue\n");
+    assert_eq!(fs::read_to_string(output).unwrap(), "ell!");
+}

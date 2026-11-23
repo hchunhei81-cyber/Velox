@@ -158,8 +158,8 @@ fn enclosing_scope(
     pairs: &HashMap<usize, usize>,
 ) -> (usize, usize) {
     let mut stack = Vec::new();
-    for i in 0..index.min(tokens.len()) {
-        match tokens[i].kind {
+    for (i, token) in tokens.iter().enumerate().take(index.min(tokens.len())) {
+        match token.kind {
             Tok::LBrace => stack.push(i),
             Tok::RBrace => {
                 stack.pop();
@@ -618,11 +618,9 @@ fn semantic_tokens(source: &str) -> Value {
             Tok::Ident(name) => {
                 if name == "import" {
                     Some(9)
-                } else if previous
-                    .is_some_and(|p| matches!(&p.kind, Tok::Ident(s) if s == "import"))
+                } else if name == "py"
+                    || previous.is_some_and(|p| matches!(&p.kind, Tok::Ident(s) if s == "import"))
                 {
-                    Some(0)
-                } else if name == "py" {
                     Some(0)
                 } else if matches!(name.as_str(), "i64" | "f64" | "bool" | "str" | "void")
                     || name.chars().next().is_some_and(char::is_uppercase)

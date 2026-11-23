@@ -1,0 +1,147 @@
+// Velox self-hosted compiler AST.
+// Node layout:
+// [kind, start, end, a, b, c, d, next]
+//
+// Declaration kinds:
+// 1 Function, 2 Struct, 3 Parameter, 4 StructField
+//
+// Statement kinds:
+// 5 Block, 6 Let, 7 Assign, 8 FieldAssign,
+// 9 Return, 10 If, 11 While, 12 For,
+// 13 ParallelFor, 14 ExprStmt
+//
+// Expression kinds:
+// 20 Integer, 21 Float, 22 String, 23 Boolean,
+// 24 Variable, 25 Negate, 26 Not, 27 Binary,
+// 28 Call, 29 Field, 30 StructInit, 31 NamedArgument
+//
+// Type kind: 32
+// Root kind: 100
+
+pub fn ast_node_count(nodes: i64) -> i64 {
+    let mut count: i64 = 0;
+    let mut current: i64 = list_i64_get(nodes, 3);
+    while current >= 0 {
+        count = count + 1;
+        current = list_i64_get(nodes, current * 8 + 7);
+    }
+    return count;
+}
+
+
+// Total allocated nodes, including expressions and statements.
+// Node zero is the root.
+pub fn ast_total_node_count(nodes: i64) -> i64 {
+    let count: i64 = list_i64_len(nodes) / 8;
+    if count <= 0 { return 0; }
+    return count - 1;
+}
+
+pub fn ast_has_error(nodes: i64) -> bool {
+    return list_i64_get(nodes, 6) > 0;
+}
+
+pub fn ast_node_kind(nodes: i64, index: i64) -> i64 {
+    let mut current: i64 = list_i64_get(nodes, 3);
+    let mut i: i64 = 0;
+    while i < index && current >= 0 {
+        current = list_i64_get(nodes, current * 8 + 7);
+        i = i + 1;
+    }
+    if current < 0 { return -1; }
+    return list_i64_get(nodes, current * 8);
+}
+
+pub fn ast_node_start(nodes: i64, index: i64) -> i64 {
+    let mut current: i64 = list_i64_get(nodes, 3);
+    let mut i: i64 = 0;
+    while i < index && current >= 0 {
+        current = list_i64_get(nodes, current * 8 + 7);
+        i = i + 1;
+    }
+    if current < 0 { return -1; }
+    return list_i64_get(nodes, current * 8 + 1);
+}
+
+pub fn ast_node_end(nodes: i64, index: i64) -> i64 {
+    let mut current: i64 = list_i64_get(nodes, 3);
+    let mut i: i64 = 0;
+    while i < index && current >= 0 {
+        current = list_i64_get(nodes, current * 8 + 7);
+        i = i + 1;
+    }
+    if current < 0 { return -1; }
+    return list_i64_get(nodes, current * 8 + 2);
+}
+
+pub fn ast_node_data(nodes: i64, index: i64, field: i64) -> i64 {
+    if index < 0 || index >= list_i64_len(nodes) / 8 {
+        return -1;
+    }
+    if field < 0 || field > 7 {
+        return -1;
+    }
+    return list_i64_get(nodes, index * 8 + field);
+}
+
+
+// Function metadata accessors.
+
+pub fn ast_function_visibility(nodes: i64, function: i64) -> i64 {
+    return ast_node_data(nodes, function, 3);
+}
+
+pub fn ast_function_name(nodes: i64, function: i64) -> i64 {
+    return ast_node_data(nodes, function, 4);
+}
+
+pub fn ast_function_meta(nodes: i64, function: i64) -> i64 {
+    return ast_node_data(nodes, function, 5);
+}
+
+pub fn ast_function_params(nodes: i64, function: i64) -> i64 {
+    let meta: i64 = ast_function_meta(nodes, function);
+    return ast_node_data(nodes, meta, 3);
+}
+
+pub fn ast_function_return_type(nodes: i64, function: i64) -> i64 {
+    let meta: i64 = ast_function_meta(nodes, function);
+    return ast_node_data(nodes, meta, 4);
+}
+
+pub fn ast_function_body(nodes: i64, function: i64) -> i64 {
+    let meta: i64 = ast_function_meta(nodes, function);
+    return ast_node_data(nodes, meta, 5);
+}
+
+// Struct metadata accessors.
+
+pub fn ast_struct_visibility(nodes: i64, structure: i64) -> i64 {
+    return ast_node_data(nodes, structure, 3);
+}
+
+pub fn ast_struct_fields(nodes: i64, structure: i64) -> i64 {
+    return ast_node_data(nodes, structure, 4);
+}
+
+pub fn ast_struct_name_start(nodes: i64, structure: i64) -> i64 {
+    return ast_node_data(nodes, structure, 5);
+}
+
+pub fn ast_struct_name_end(nodes: i64, structure: i64) -> i64 {
+    return ast_node_data(nodes, structure, 6);
+}
+
+// Parameter and field accessors.
+
+pub fn ast_parameter_type(nodes: i64, parameter: i64) -> i64 {
+    return ast_node_data(nodes, parameter, 3);
+}
+
+pub fn ast_field_type(nodes: i64, field: i64) -> i64 {
+    return ast_node_data(nodes, field, 3);
+}
+
+pub fn ast_error_position(nodes: i64) -> i64 {
+    return list_i64_get(nodes, 5);
+}
