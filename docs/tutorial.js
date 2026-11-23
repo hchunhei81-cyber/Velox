@@ -49,7 +49,6 @@
       err4Q:"Circular dependency", err4A:"Inspect the graph of using declarations for a cycle. The current driver regression test uses error code E0203.",
       err5Q:"Program output differs from expectation", err5A:"Confirm parsing and type checking first, then inspect generated C. Compile and run that C output separately to isolate frontend, backend, and native compilation issues.",
       referenceTitle:"Complete example: define, compile, run", endTitle:"Keep building Velox.", endText:"Start with small programs, type checking, and code-generation tests. Expand language capabilities incrementally, and keep regression tests and bootstrap verification in step with implementation.",
-      footerText:"Standalone static page · No Tailwind · No external runtime dependencies"
     },
     zh: {}
   };
@@ -98,7 +97,6 @@
     err4Q:"循环依赖", err4A:"检查 using 文件关系是否形成环。当前驱动器的循环依赖回归使用错误码 E0203。",
     err5Q:"程序输出与预期不同", err5A:"先确认 parser 和 type checker 均通过，再检查生成的 C 文件；最后单独编译并运行 C 输出，以区分前端、后端与本机编译阶段的问题。",
     referenceTitle:"完整示例：从定义到运行", endTitle:"Keep building Velox.", endText:"从小程序、类型检查与代码生成测试开始，逐步扩展语言能力，并始终让回归测试和自举验证跟上实现。",
-    footerText:"独立静态页面 · 无 Tailwind · 无外部运行时依赖"
   };
   translations.zh = zh;
 
