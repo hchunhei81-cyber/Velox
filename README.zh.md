@@ -33,7 +33,7 @@ Velox 是一门实验性的通用编程语言，目标是兼顾可读性、静�
 ## 构建
 
 ```bash
-git clone https://github.com/novarift1/Velox.git
+git clone https://github.com/hchunhei81-cyber/Velox.git
 cd Velox
 cargo build --release
 ```
