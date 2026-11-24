@@ -125,6 +125,46 @@ fn main() {
 }
 VX
 
+cat > "$WORK/parallel-reduction.vx" <<'VX'
+fn main() {
+    let mut sum: i64 = 0;
+    let mut count: i64 = 0;
+    parallel for i in 0..1000 {
+        sum = sum + i;
+        count = i + count;
+    }
+    println(sum);
+    println(count);
+}
+VX
+
+cat > "$WORK/parallel-f64-reduction.vx" <<'VX'
+fn main() {
+    let mut sum: f64 = 0.0;
+    parallel for i in 0..10 {
+        sum = sum + 0.5;
+    }
+    println(sum == 5.0);
+}
+VX
+
+cat > "$WORK/not-equal.vx" <<'VX'
+fn main() {
+    println(1 == 1);
+    println(1 != 2);
+    println(1 < 2);
+    println(2 > 1);
+    println(2 <= 2);
+    println(2 >= 2);
+    println(1.5 < 2.5);
+    println(2.5 >= 2.5);
+    println(true == true);
+    println(true != false);
+    println((1 + 2) < 4);
+    println((1 < 2) && (3 >= 3));
+}
+VX
+
 cat > "$HARNESS" <<VX
 using "lexer.vx";
 using "ast.vx";
@@ -200,6 +240,24 @@ fn main() {
         println("PARALLEL LOCAL WRITE FAIL");
     }
 
+    if compile_file("$WORK/parallel-reduction.vx", "$WORK/parallel-reduction") {
+        println("PARALLEL REDUCTION COMPILE PASS");
+    } else {
+        println("PARALLEL REDUCTION COMPILE FAIL");
+    }
+
+    if compile_file("$WORK/parallel-f64-reduction.vx", "$WORK/parallel-f64-reduction") {
+        println("PARALLEL F64 REDUCTION COMPILE PASS");
+    } else {
+        println("PARALLEL F64 REDUCTION COMPILE FAIL");
+    }
+
+    if compile_file("$WORK/not-equal.vx", "$WORK/not-equal") {
+        println("NOT EQUAL COMPILE PASS");
+    } else {
+        println("NOT EQUAL COMPILE FAIL");
+    }
+
     if compile_file("$WORK/return-field.vx", "$WORK/return-field") {
         println("RETURN FIELD FAIL");
     } else {
@@ -232,7 +290,50 @@ grep -q "PARALLEL STAGE1 COMPILE PASS" "$WORK/result.log"
 grep -q "PARALLEL OUTER WRITE REJECT" "$WORK/result.log"
 grep -q "PARALLEL LOCAL WRITE PASS" "$WORK/result.log"
 
+grep -q "PARALLEL REDUCTION COMPILE PASS" "$WORK/result.log"
+grep -qE '#pragma omp parallel for reduction\(\+: .*,' "$WORK/parallel-reduction.c"
 
+clang -std=c11 -O2 -Xpreprocessor -fopenmp \
+    -I"$(brew --prefix libomp)/include" \
+    "$WORK/parallel-reduction.c" \
+    -L"$(brew --prefix libomp)/lib" -lomp \
+    -o "$WORK/parallel-reduction"
+output=$("$WORK/parallel-reduction")
+expected=$(printf '499500\n499500')
+if [ "$output" != "$expected" ]; then
+    echo "PARALLEL REDUCTION OUTPUT MISMATCH"
+    printf 'Expected:\n%s\nActual:\n%s\n' "$expected" "$output"
+    exit 1
+fi
+echo "MULTI REDUCTION EXECUTION PASS"
+
+grep -q "PARALLEL F64 REDUCTION COMPILE PASS" "$WORK/result.log"
+grep -qE '#pragma omp parallel for reduction\(\+: .*\)' "$WORK/parallel-f64-reduction.c"
+
+clang -std=c11 -O2 -Xpreprocessor -fopenmp \
+    -I"$(brew --prefix libomp)/include" \
+    "$WORK/parallel-f64-reduction.c" \
+    -L"$(brew --prefix libomp)/lib" -lomp \
+    -o "$WORK/parallel-f64-reduction"
+
+output=$("$WORK/parallel-f64-reduction")
+if [ "$output" != "true" ]; then
+    echo "F64 REDUCTION OUTPUT MISMATCH"
+    printf 'Expected: true\nActual: %s\n' "$output"
+    exit 1
+fi
+echo "F64 REDUCTION EXECUTION PASS"
+
+grep -q "NOT EQUAL COMPILE PASS" "$WORK/result.log"
+clang -std=c11 -O2 "$WORK/not-equal.c" -o "$WORK/not-equal"
+output=$("$WORK/not-equal")
+expected=$(printf 'true\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue')
+if [ "$output" != "$expected" ]; then
+    echo "NOT EQUAL OUTPUT MISMATCH"
+    printf 'Expected:\n%s\nActual:\n%s\n' "$expected" "$output"
+    exit 1
+fi
+echo "NOT EQUAL EXECUTION PASS"
 
 grep -q "#pragma omp parallel for" "$WORK/parallel-stage1.c"
 clang -std=c11 -O2 "$WORK/parallel-stage1.c" -o "$WORK/parallel-stage1"

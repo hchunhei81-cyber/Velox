@@ -511,7 +511,6 @@ mod extern_merge_tests {
     }
 }
 
-
 #[cfg(test)]
 mod dependency_regression_tests {
     use super::*;
@@ -522,11 +521,8 @@ mod dependency_regression_tests {
 
         loop {
             let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-            let dir = std::env::temp_dir().join(format!(
-                "velox-deps-test-{}-{}",
-                std::process::id(),
-                id
-            ));
+            let dir =
+                std::env::temp_dir().join(format!("velox-deps-test-{}-{}", std::process::id(), id));
 
             match fs::create_dir(&dir) {
                 Ok(()) => return dir,
@@ -542,17 +538,18 @@ mod dependency_regression_tests {
         let math = dir.join("math.vx");
         let main = dir.join("main.vx");
 
-        fs::write(&math, "pub fn add(a: i64, b: i64) -> i64 { return a + b; }\n").unwrap();
+        fs::write(
+            &math,
+            "pub fn add(a: i64, b: i64) -> i64 { return a + b; }\n",
+        )
+        .unwrap();
         fs::write(
             &main,
             "using \"math.vx\";\nusing \"math.vx\";\nfn main() {}\n",
-        ).unwrap();
+        )
+        .unwrap();
 
-        let (files, _) = collect_files(
-            &main,
-            &mut HashSet::new(),
-            &mut HashSet::new(),
-        ).unwrap();
+        let (files, _) = collect_files(&main, &mut HashSet::new(), &mut HashSet::new()).unwrap();
 
         assert_eq!(files.len(), 2);
         assert_eq!(files[0], math.canonicalize().unwrap());
@@ -570,11 +567,7 @@ mod dependency_regression_tests {
         fs::write(&a, "using \"b.vx\";\nfn main() {}\n").unwrap();
         fs::write(&b, "using \"a.vx\";\n").unwrap();
 
-        let result = collect_files(
-            &a,
-            &mut HashSet::new(),
-            &mut HashSet::new(),
-        );
+        let result = collect_files(&a, &mut HashSet::new(), &mut HashSet::new());
 
         let error = result.unwrap_err();
         assert!(error.contains("E0203"), "unexpected error: {}", error);

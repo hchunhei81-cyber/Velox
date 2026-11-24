@@ -136,3 +136,54 @@ fn analysis_api_counts_unicode_characters_in_columns() {
     let source = "fn main() -> void {\n    let label: str = \"中文\"; let x: i64 = true;\n}\n";
     assert_diagnostic_span(source, "true", 2);
 }
+
+#[test]
+fn analysis_api_points_to_unexpected_struct_token() {
+    let source = "struct Point { x: i64 y: i64 }";
+    let diagnostic = analyze_source(source, "struct.vx").unwrap_err();
+    let start = diagnostic.start.expect("missing start offset");
+    let end = diagnostic.end.expect("missing end offset");
+
+    assert_eq!(&source[start..end], "y");
+}
+
+#[test]
+fn analysis_api_points_to_eof_when_closing_brace_is_missing() {
+    let source = "fn main() -> void { let x: i64 = 1;";
+    let diagnostic = analyze_source(source, "eof.vx").unwrap_err();
+
+    assert_eq!(diagnostic.start, Some(source.len()));
+    assert_eq!(diagnostic.end, Some(source.len()));
+}
+
+#[test]
+fn analysis_api_points_to_wrong_function_argument_count() {
+    let source = "fn take(x: i64) -> void { print(x); }\nfn main() -> void {\n    take();\n}\n";
+    assert_diagnostic_span(source, "take", 3);
+}
+
+#[test]
+fn analysis_api_points_to_wrong_print_argument_count() {
+    let source = "fn main() -> void {\n    print(1, 2);\n}\n";
+    assert_diagnostic_span(source, "print", 2);
+}
+
+#[test]
+fn analysis_api_points_to_unknown_struct_field_value() {
+    let source = "struct Point { x: i64 }\nfn main() -> void {\n    let p = Point { z: 1 };\n}\n";
+    assert_diagnostic_span(source, "1", 3);
+}
+
+#[test]
+fn analysis_api_points_to_duplicate_struct_field_value() {
+    let source =
+        "struct Point { x: i64 }\nfn main() -> void {\n    let p = Point { x: 1, x: 2 };\n}\n";
+    assert_diagnostic_span(source, "2", 3);
+}
+
+#[test]
+fn analysis_api_points_to_struct_init_with_missing_field() {
+    let source =
+        "struct Point { x: i64, y: i64 }\nfn main() -> void {\n    let p = Point { x: 1 };\n}\n";
+    assert_diagnostic_span(source, "Point", 3);
+}

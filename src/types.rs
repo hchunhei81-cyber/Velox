@@ -397,15 +397,27 @@ impl Checker {
                 Ok(false)
             }
             Stmt::FieldAssign(target, value) => {
-                let root = field_root_var(target).ok_or_else(|| {
-                    "E0500: field assignment target must be rooted in a local variable".to_string()
-                })?;
+                let root = match field_root_var(target) {
+                    Some(root) => root,
+                    None => {
+                        self.mark_error_span(expr_span(target));
+                        return Err(
+                            "E0500: field assignment target must be rooted in a local variable"
+                                .into(),
+                        );
+                    }
+                };
 
-                let var = env
-                    .get(root)
-                    .ok_or_else(|| format!("E0100: undefined variable `{}`", root))?;
+                let var = match env.get(root) {
+                    Some(var) => var,
+                    None => {
+                        self.mark_error_span(expr_span(target));
+                        return Err(format!("E0100: undefined variable `{}`", root));
+                    }
+                };
 
                 if !var.mutable {
+                    self.mark_error_span(expr_span(target));
                     return Err(format!(
                         "E0500: cannot modify a field of immutable variable `{}`; declare it with `let mut`",
                         root
@@ -413,6 +425,7 @@ impl Checker {
                 }
 
                 if !matches!(strip_located(target), Expr::Field(_, _)) {
+                    self.mark_error_span(expr_span(target));
                     return Err("E0500: invalid field assignment target".into());
                 }
 
@@ -430,6 +443,9 @@ impl Checker {
             }
             Stmt::Return(e) => {
                 if parallel {
+                    if let Some(expr) = e {
+                        self.mark_error_span(expr_span(expr));
+                    }
                     return Err("E0403: `return` is not allowed inside `parallel for`".into());
                 }
                 match e {
@@ -486,9 +502,13 @@ impl Checker {
                         var
                     ));
                 }
-                if self.check_expr(start, env, origin)? != Ty::I64
-                    || self.check_expr(end, env, origin)? != Ty::I64
-                {
+                let start_ty = self.check_expr(start, env, origin)?;
+                if start_ty != Ty::I64 {
+                    self.mark_error_span(expr_span(start));
+                    return Err("E0401: `for` bounds must have type `i64`".into());
+                }
+                if self.check_expr(end, env, origin)? != Ty::I64 {
+                    self.mark_error_span(expr_span(end));
                     return Err("E0401: `for` bounds must have type `i64`".into());
                 }
                 let mut inner = env.clone();
@@ -517,9 +537,13 @@ impl Checker {
                         var
                     ));
                 }
-                if self.check_expr(start, env, origin)? != Ty::I64
-                    || self.check_expr(end, env, origin)? != Ty::I64
-                {
+                let start_ty = self.check_expr(start, env, origin)?;
+                if start_ty != Ty::I64 {
+                    self.mark_error_span(expr_span(start));
+                    return Err("E0401: `parallel for` bounds must have type `i64`".into());
+                }
+                if self.check_expr(end, env, origin)? != Ty::I64 {
+                    self.mark_error_span(expr_span(end));
                     return Err("E0401: `parallel for` bounds must have type `i64`".into());
                 }
                 let mut inner = env.clone();
@@ -571,9 +595,16 @@ impl Checker {
                 }
                 let mut seen = HashMap::new();
                 for (field, expr) in values {
-                    let expected = info.fields.get(field).ok_or_else(|| {
-                        format!("E0308: struct `{}` has no field `{}`", name, field)
-                    })?;
+                    let expected = match info.fields.get(field) {
+                        Some(expected) => expected,
+                        None => {
+                            self.mark_error_span(expr_span(expr));
+                            return Err(format!(
+                                "E0308: struct `{}` has no field `{}`",
+                                name, field
+                            ));
+                        }
+                    };
                     let actual = self.check_expr(expr, env, origin)?;
                     if &actual != expected {
                         self.mark_error_span(expr_span(expr));
@@ -583,6 +614,7 @@ impl Checker {
                         ));
                     }
                     if seen.insert(field, ()).is_some() {
+                        self.mark_error_span(expr_span(expr));
                         return Err(format!(
                             "E0308: field `{}` is initialized more than once",
                             field
@@ -625,7 +657,7 @@ impl Checker {
 
                 let invalid_left = match op {
                     BinOp::And | BinOp::Or => a != Ty::Bool,
-                    BinOp::Eq => false,
+                    BinOp::Eq | BinOp::Ne => false,
                     BinOp::Lt
                     | BinOp::Gt
                     | BinOp::Le
@@ -638,7 +670,7 @@ impl Checker {
                 };
                 let invalid_right = match op {
                     BinOp::And | BinOp::Or => b != Ty::Bool,
-                    BinOp::Eq => a != b,
+                    BinOp::Eq | BinOp::Ne => a != b,
                     BinOp::Lt
                     | BinOp::Gt
                     | BinOp::Le
@@ -663,11 +695,11 @@ impl Checker {
                             Err("E0308: `&&` and `||` operands must both have type `bool`".into())
                         }
                     }
-                    BinOp::Eq => {
+                    BinOp::Eq | BinOp::Ne => {
                         if a == b && matches!(a, Ty::I64 | Ty::F64 | Ty::Bool) {
                             Ok(Ty::Bool)
                         } else {
-                            Err("E0308: both operands of `==` must have the same comparable type".into())
+                            Err("E0308: both operands of equality comparison must have the same comparable type".into())
                         }
                     }
                     BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge => match (a, b) {

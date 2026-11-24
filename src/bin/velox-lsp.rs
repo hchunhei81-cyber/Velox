@@ -605,6 +605,7 @@ fn semantic_tokens(source: &str) -> Value {
             | Tok::Percent
             | Tok::Eq
             | Tok::EqEq
+            | Tok::NotEq
             | Tok::Lt
             | Tok::Gt
             | Tok::Le

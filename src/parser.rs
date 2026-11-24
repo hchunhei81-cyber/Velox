@@ -49,10 +49,7 @@ impl Parser {
         match self.program() {
             Ok(program) => Ok(program),
             Err(message) => {
-                let span = self
-                    .error_span
-                    .or(self.last_span)
-                    .unwrap_or_else(|| self.current_span());
+                let span = self.error_span.unwrap_or_else(|| self.current_span());
                 Err((message, span))
             }
         }
@@ -388,6 +385,7 @@ impl Parser {
         loop {
             let op = match self.peek() {
                 Tok::EqEq => BinOp::Eq,
+                Tok::NotEq => BinOp::Ne,
                 Tok::Lt => BinOp::Lt,
                 Tok::Gt => BinOp::Gt,
                 Tok::Le => BinOp::Le,

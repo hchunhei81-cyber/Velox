@@ -381,6 +381,34 @@ fn main() -> void {
 }
 
 #[test]
+fn not_equal_comparison_works() {
+    let case = Case::new(
+        r#"
+fn main() -> void {
+    print(1 != 2);
+    print(2 != 2);
+    print(1.5 != 2.5);
+    print(2.5 != 2.5);
+    print(true != false);
+    print(false != false);
+    print(!(1 != 1));
+    print((1 != 2) && (3 != 4));
+}
+"#,
+    );
+
+    let build = case.compile();
+    assert!(build.status.success(), "compile failed: {}", stderr(&build));
+
+    let run = case.run();
+    assert!(run.status.success());
+    assert_eq!(
+        stdout(&run).trim(),
+        "true\nfalse\ntrue\nfalse\ntrue\nfalse\ntrue\ntrue"
+    );
+}
+
+#[test]
 fn comparisons_produce_bool_and_control_flow_works() {
     let case = Case::new(
         r#"
@@ -1086,4 +1114,38 @@ fn main() {{
     assert!(run.status.success(), "run failed: {}", stderr(&run));
     assert_eq!(stdout(&run), "5\n101\nell!\ntrue\n2\n9\ntrue\n");
     assert_eq!(fs::read_to_string(output).unwrap(), "ell!");
+}
+
+#[test]
+fn comparison_operator_matrix_works() {
+    let case = Case::new(
+        r#"
+fn main() -> void {
+    print(1 == 1);
+    print(1 != 2);
+    print(1 < 2);
+    print(2 > 1);
+    print(2 <= 2);
+    print(2 >= 2);
+    print(1.5 < 2.5);
+    print(2.5 >= 2.5);
+    print(true == true);
+    print(true != false);
+    print((1 + 2) < 4);
+    print((1 < 2) && (3 >= 3));
+    print(2 < 1);
+    print(2 > 3);
+}
+"#,
+    );
+
+    let build = case.compile();
+    assert!(build.status.success(), "compile failed: {}", stderr(&build));
+
+    let run = case.run();
+    assert!(run.status.success());
+    assert_eq!(
+        stdout(&run).trim(),
+        "true\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\nfalse\nfalse"
+    );
 }

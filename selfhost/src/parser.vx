@@ -421,7 +421,7 @@ fn p_parse_compare(state: i64) -> i64 {
 
     while p_kind(state) == 36 || p_kind(state) == 37 ||
           p_kind(state) == 38 || p_kind(state) == 39 ||
-          p_kind(state) == 40 {
+          p_kind(state) == 40 || p_kind(state) == 44 {
         let op: i64 = p_advance(state);
         let right: i64 = p_parse_add(state);
         if right < 0 { return -1; }

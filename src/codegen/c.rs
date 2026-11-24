@@ -683,6 +683,7 @@ static double velox_py_call_f64(const char *module_name,
             },
             Expr::Bin(l, op, r) => match op {
                 BinOp::Eq
+                | BinOp::Ne
                 | BinOp::Lt
                 | BinOp::Gt
                 | BinOp::Le
@@ -773,6 +774,7 @@ static double velox_py_call_f64(const char *module_name,
                     BinOp::Div => "/",
                     BinOp::Mod => "%",
                     BinOp::Eq => "==",
+                    BinOp::Ne => "!=",
                     BinOp::Lt => "<",
                     BinOp::Gt => ">",
                     BinOp::Le => "<=",

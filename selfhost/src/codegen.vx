@@ -45,6 +45,115 @@ fn cg_type(source: str, nodes: i64, node: i64) -> str {
     return cg_mangle("vxt_", name);
 }
 
+fn cg_infer_type(source: str, nodes: i64, node: i64,
+                   params: i64, body: i64) -> str {
+    if node < 0 { return "int64_t"; }
+    let kind: i64 = cg_node(nodes,node,0);
+    if kind == 20 { return "int64_t"; }
+    if kind == 21 { return "double"; }
+    if kind == 22 { return "velox_str"; }
+    if kind == 23 { return "bool"; }
+
+    if kind == 24 {
+        let start: i64 = cg_node(nodes,node,1);
+        let end: i64 = cg_node(nodes,node,2);
+        let mut param: i64 = params;
+        while param >= 0 {
+            if str_eq(cg_slice(source,start,end),
+                cg_slice(source,cg_node(nodes,param,1),cg_node(nodes,param,2))) {
+                return cg_type(source,nodes,cg_node(nodes,param,3));
+            }
+            param = cg_node(nodes,param,7);
+        }
+
+        let mut statement: i64 = cg_node(nodes,body,3);
+        while statement >= 0 {
+            if cg_node(nodes,statement,0) == 6 {
+                let name_start: i64 = cg_node(nodes,statement,6);
+                let mut name_end: i64 = name_start;
+                while name_end < str_len(source) &&
+                    ((str_byte_at(source,name_end) >= 48 && str_byte_at(source,name_end) <= 57) ||
+                     (str_byte_at(source,name_end) >= 65 && str_byte_at(source,name_end) <= 90) ||
+                     (str_byte_at(source,name_end) >= 97 && str_byte_at(source,name_end) <= 122) ||
+                     str_byte_at(source,name_end) == 95) {
+                    name_end = name_end + 1;
+                }
+                if str_eq(cg_slice(source,start,end),cg_slice(source,name_start,name_end)) {
+                    let declared: i64 = cg_node(nodes,statement,4);
+                    if declared >= 0 { return cg_type(source,nodes,declared); }
+                    return cg_infer_type(source,nodes,cg_node(nodes,statement,5),params,body);
+                }
+            }
+            statement = cg_node(nodes,statement,7);
+        }
+        return "int64_t";
+    }
+
+    if kind == 25 {
+        return cg_infer_type(source,nodes,cg_node(nodes,node,3),params,body);
+    }
+    if kind == 26 { return "bool"; }
+    if kind == 27 {
+        let op: i64 = cg_node(nodes,node,3);
+        if op >= 36 && op <= 44 { return "bool"; }
+        return cg_infer_type(source,nodes,cg_node(nodes,node,4),params,body);
+    }
+    if kind == 28 {
+        let callee: i64 = cg_node(nodes,node,3);
+        let name: str = cg_slice(source,cg_node(nodes,callee,1),cg_node(nodes,callee,2));
+        if str_eq(name,"read_file") || str_eq(name,"str_slice") ||
+           str_eq(name,"str_concat") { return "velox_str"; }
+        if str_eq(name,"str_eq") || str_eq(name,"write_file") { return "bool"; }
+        if str_eq(name,"str_len") || str_eq(name,"str_byte_at") ||
+           str_eq(name,"str_byte_at_fast") { return "int64_t"; }
+
+        let mut declaration: i64 = cg_node(nodes,0,3);
+        while declaration >= 0 {
+            if cg_node(nodes,declaration,0) == 1 {
+                let function_name: i64 = cg_node(nodes,declaration,4);
+                if str_eq(name,cg_slice(source,cg_node(nodes,function_name,1),
+                                               cg_node(nodes,function_name,2))) {
+                    let meta: i64 = cg_node(nodes,declaration,5);
+                    return cg_type(source,nodes,cg_node(nodes,meta,4));
+                }
+            }
+            declaration = cg_node(nodes,declaration,7);
+        }
+        return "int64_t";
+    }
+    if kind == 29 {
+        let base: i64 = cg_node(nodes,node,3);
+        let base_type: str = cg_infer_type(source,nodes,base,params,body);
+        let field_start: i64 = cg_node(nodes,node,4);
+        let field_end: i64 = cg_node(nodes,node,5);
+        let mut declaration: i64 = cg_node(nodes,0,3);
+
+        while declaration >= 0 {
+            if cg_node(nodes,declaration,0) == 2 {
+                let struct_name: str = cg_mangle("vxt_",
+                    cg_slice(source,cg_node(nodes,declaration,5),
+                                    cg_node(nodes,declaration,6)));
+                if str_eq(base_type,struct_name) {
+                    let mut field: i64 = cg_node(nodes,declaration,4);
+                    while field >= 0 {
+                        if str_eq(
+                            cg_slice(source,field_start,field_end),
+                            cg_slice(source,cg_node(nodes,field,1),
+                                            cg_node(nodes,field,2))) {
+                            return cg_type(source,nodes,cg_node(nodes,field,3));
+                        }
+                        field = cg_node(nodes,field,7);
+                    }
+                }
+            }
+            declaration = cg_node(nodes,declaration,7);
+        }
+        return "int64_t";
+    }
+    if kind == 30 { return cg_type(source,nodes,cg_node(nodes,node,3)); }
+    return "int64_t";
+}
+
 fn cg_operator(op: i64) -> str {
     if op == 30 { return "+"; }
     if op == 31 { return "-"; }
@@ -52,6 +161,7 @@ fn cg_operator(op: i64) -> str {
     if op == 33 { return "/"; }
     if op == 34 { return "%"; }
     if op == 36 { return "=="; }
+    if op == 44 { return "!="; }
     if op == 37 { return "<"; }
     if op == 38 { return ">"; }
     if op == 39 { return "<="; }
@@ -63,7 +173,7 @@ fn cg_operator(op: i64) -> str {
 
 fn cg_is_string_param(source: str, nodes: i64,
                        params: i64, node: i64) -> bool {
-    if node < 0 || cg_node(nodes, node, 0) < 24 || cg_node(nodes, node, 0) > 24 {
+    if node < 0 || cg_node(nodes, node, 0) != 24 {
         return false;
     }
 
@@ -90,49 +200,36 @@ fn cg_is_string_param(source: str, nodes: i64,
 
 
 fn cg_is_string_local(source: str, nodes: i64,
-                      body: i64, node: i64) -> bool {
-    if node < 0 || (cg_node(nodes, node, 0) < 24 || cg_node(nodes, node, 0) > 24) {
-        return false;
-    }
+                      body: i64, node: i64, params: i64) -> bool {
+    if node < 0 || cg_node(nodes,node,0) != 24 { return false; }
 
     let variable_name: str = cg_slice(source,
-        cg_node(nodes, node, 1), cg_node(nodes, node, 2));
-
-    let mut statement: i64 = cg_node(nodes, body, 3);
+        cg_node(nodes,node,1),cg_node(nodes,node,2));
+    let mut statement: i64 = cg_node(nodes,body,3);
 
     while statement >= 0 {
-        if cg_node(nodes, statement, 0) == 6 {
-            let name_start: i64 = cg_node(nodes, statement, 6);
+        if cg_node(nodes,statement,0) == 6 {
+            let name_start: i64 = cg_node(nodes,statement,6);
             let mut name_end: i64 = name_start;
-
             while name_end < str_len(source) &&
-                  ((str_byte_at(source, name_end) >= 48 &&
-                    str_byte_at(source, name_end) <= 57) ||
-                   (str_byte_at(source, name_end) >= 65 &&
-                    str_byte_at(source, name_end) <= 90) ||
-                   (str_byte_at(source, name_end) >= 97 &&
-                    str_byte_at(source, name_end) <= 122) ||
-                    str_byte_at(source, name_end) == 95) {
+                ((str_byte_at(source,name_end) >= 48 && str_byte_at(source,name_end) <= 57) ||
+                 (str_byte_at(source,name_end) >= 65 && str_byte_at(source,name_end) <= 90) ||
+                 (str_byte_at(source,name_end) >= 97 && str_byte_at(source,name_end) <= 122) ||
+                 str_byte_at(source,name_end) == 95) {
                 name_end = name_end + 1;
             }
-
-            let local_name: str = cg_slice(source, name_start, name_end);
-
-            if str_eq(variable_name, local_name) {
-                let type_node: i64 = cg_node(nodes, statement, 4);
-                if type_node < 0 { return false; }
-
-                let type_name: str = cg_slice(source,
-                    cg_node(nodes, type_node, 1),
-                    cg_node(nodes, type_node, 2));
-
-                return str_eq(type_name, "str");
+            if str_eq(variable_name,cg_slice(source,name_start,name_end)) {
+                let type_node: i64 = cg_node(nodes,statement,4);
+                if type_node >= 0 {
+                    return str_eq(cg_slice(source,cg_node(nodes,type_node,1),
+                                                  cg_node(nodes,type_node,2)),"str");
+                }
+                return str_eq(cg_infer_type(source,nodes,
+                    cg_node(nodes,statement,5),params,body),"velox_str");
             }
         }
-
-        statement = cg_node(nodes, statement, 7);
+        statement = cg_node(nodes,statement,7);
     }
-
     return false;
 }
 
@@ -188,11 +285,11 @@ fn cg_expr(source: str, nodes: i64, node: i64, params: i64, body: i64) -> str {
         if str_eq(name, "print") || str_eq(name, "println") {
             if current < 0 { return "((void)0)"; }
             let value: str = cg_expr(source, nodes, current, params, body);
-            let value_kind: i64 = cg_node(nodes, current, 0);
-            if value_kind == 22 || cg_is_string_param(source, nodes, params, current) || cg_is_string_local(source, nodes, body, current) {
+            let value_type: str = cg_infer_type(source,nodes,current,params,body);
+            if str_eq(value_type,"velox_str") {
                 return str_concat("printf(\"%s\\n\", ", str_concat(value, ")"));
             }
-            if value_kind == 23 {
+            if str_eq(value_type,"bool") {
                 return str_concat("printf(\"%s\\n\", (", str_concat(
                     value, ") ? \"true\" : \"false\")"));
             }
@@ -267,6 +364,66 @@ fn cg_block(source: str, nodes: i64, block: i64, params: i64, body: i64) -> str 
     return str_concat(result, "}\n");
 }
 
+fn cg_reduction_has(items: str, name: str) -> bool {
+    let n: i64 = str_len(name);
+    let total: i64 = str_len(items);
+    let mut i: i64 = 0;
+    while i + n <= total {
+        if str_eq(str_slice(items,i,i+n),name) {
+            let left_ok: bool = i == 0 || str_byte_at(items,i-1) == 44;
+            let right_ok: bool = i+n == total || str_byte_at(items,i+n) == 44;
+            if left_ok && right_ok { return true; }
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn cg_parallel_reduction(source: str, nodes: i64, body_node: i64) -> str {
+    let mut result: str = "";
+    let mut statement: i64 = cg_node(nodes,body_node,3);
+    while statement >= 0 {
+        if cg_node(nodes,statement,0) == 7 {
+            let lhs: i64 = cg_node(nodes,statement,3);
+            let rhs: i64 = cg_node(nodes,statement,4);
+            if lhs >= 0 && rhs >= 0 &&
+               cg_node(nodes,lhs,0) == 24 &&
+               cg_node(nodes,rhs,0) == 27 &&
+               cg_node(nodes,rhs,3) == 30 {
+                let ls: i64 = cg_node(nodes,lhs,1);
+                let le: i64 = cg_node(nodes,lhs,2);
+                let left: i64 = cg_node(nodes,rhs,4);
+                let right: i64 = cg_node(nodes,rhs,5);
+                let mut valid: bool = false;
+
+                if left >= 0 && cg_node(nodes,left,0) == 24 &&
+                   str_eq(cg_slice(source,ls,le),
+                       cg_slice(source,cg_node(nodes,left,1),cg_node(nodes,left,2))) {
+                    valid = true;
+                }
+                if right >= 0 && cg_node(nodes,right,0) == 24 &&
+                   str_eq(cg_slice(source,ls,le),
+                       cg_slice(source,cg_node(nodes,right,1),cg_node(nodes,right,2))) {
+                    valid = true;
+                }
+
+                if valid {
+                    let name: str = cg_mangle("vxv_",cg_slice(source,ls,le));
+                    if cg_reduction_has(result,name) == false {
+                        if str_eq(result,"") {
+                            result = name;
+                        } else {
+                            result = str_concat(result,str_concat(", ",name));
+                        }
+                    }
+                }
+            }
+        }
+        statement = cg_node(nodes,statement,7);
+    }
+    return result;
+}
+
 fn cg_stmt(source: str, nodes: i64, node: i64, params: i64, body: i64) -> str {
     let kind: i64 = cg_node(nodes, node, 0);
 
@@ -293,7 +450,7 @@ fn cg_stmt(source: str, nodes: i64, node: i64, params: i64, body: i64) -> str {
             cg_slice(source, name_start, name_end));
         let mut ty: str = cg_type(source, nodes, type_node);
         if type_node < 0 {
-            ty = "int64_t";
+            ty = cg_infer_type(source,nodes,init,params,body);
         }
         return str_concat("    ", str_concat(ty,
             str_concat(" ", str_concat(name,
@@ -385,18 +542,26 @@ fn cg_stmt(source: str, nodes: i64, node: i64, params: i64, body: i64) -> str {
             name_end = name_end + 1;
         }
         let name: str = cg_mangle("vxv_",cg_slice(source,name_start,name_end));
-        let mut head: str = "    #pragma omp parallel for\n    for (int64_t ";
-        head = str_concat(head,name);
-        head = str_concat(head," = ");
-        head = str_concat(head,from);
-        head = str_concat(head,"; ");
-        head = str_concat(head,name);
-        head = str_concat(head," < ");
-        head = str_concat(head,to);
-        head = str_concat(head,"; ");
-        head = str_concat(head,name);
-        head = str_concat(head,"++) ");
-        return str_concat(head,loop_body);
+        let mut result: str = "    {\n      int64_t velox_parallel_end = ";
+        result = str_concat(result,str_concat(to,";\n"));
+        let reduction: str = cg_parallel_reduction(source,nodes,cg_node(nodes,node,5));
+        if str_eq(reduction,"") == false {
+            result = str_concat(result,"      #pragma omp parallel for reduction(+: ");
+            result = str_concat(result,str_concat(reduction,")\n"));
+        } else {
+            result = str_concat(result,"      #pragma omp parallel for\n");
+        }
+        result = str_concat(result,"      for (int64_t ");
+        result = str_concat(result,name);
+        result = str_concat(result," = ");
+        result = str_concat(result,from);
+        result = str_concat(result,"; ");
+        result = str_concat(result,name);
+        result = str_concat(result," < velox_parallel_end; ");
+        result = str_concat(result,name);
+        result = str_concat(result,"++) ");
+        result = str_concat(result,loop_body);
+        return str_concat(result,"    }\n");
     }
     if kind == 14 {
         return str_concat("    ",

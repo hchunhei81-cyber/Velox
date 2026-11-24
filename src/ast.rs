@@ -44,6 +44,7 @@ pub enum BinOp {
     Div,
     Mod,
     Eq,
+    Ne,
     Lt,
     Gt,
     Le,

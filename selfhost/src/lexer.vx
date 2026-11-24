@@ -174,7 +174,10 @@ pub fn tokenize(source: str) -> i64 {
                                 else if c == 42 { kind = 32; }
                                 else if c == 47 { kind = 33; }
                                 else if c == 37 { kind = 34; }
-                                else if c == 33 { kind = 43; }
+                                else if c == 33 {
+                                    kind = 43;
+                                    if next == 61 { kind = 44; width = 2; }
+                                }
                                 else if c == 45 {
                                     kind = 31;
                                     if next == 62 { kind = 27; width = 2; }

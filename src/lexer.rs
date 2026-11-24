@@ -36,6 +36,7 @@ pub enum Tok {
     Percent,
     Eq,
     EqEq,
+    NotEq,
     Lt,
     Gt,
     Le,
@@ -308,7 +309,14 @@ impl<'a> Lexer<'a> {
                         return Err("expected `||`".into());
                     }
                 }
-                b'!' => Tok::Bang,
+                b'!' => {
+                    if self.peek() == b'=' {
+                        self.bump();
+                        Tok::NotEq
+                    } else {
+                        Tok::Bang
+                    }
+                }
                 b'-' => {
                     if self.peek() == b'>' {
                         self.bump();

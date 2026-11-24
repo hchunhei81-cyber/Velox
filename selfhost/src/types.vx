@@ -147,7 +147,7 @@ fn tc_expr(state: i64, source: str, node: i64, vars: i64) -> i64 {
             if left == 3 && right == 3 { return 3; }
             return -1;
         }
-        if a == 36 {
+        if a == 36 || a == 44 {
             if left == right && (left == 1 || left == 2 || left == 3) { return 3; }
             return -1;
         }
@@ -357,35 +357,53 @@ fn tc_field_root_var(state: i64, source: str, expr: i64, vars: i64) -> i64 {
 fn tc_parallel_reduction(state: i64, source: str, lhs: i64, rhs: i64, vars: i64) -> bool {
     let nodes: i64 = list_i64_get(state,0);
     if lhs < 0 || rhs < 0 { return false; }
-    if ast_node_kind(nodes,lhs) < 24 ||ast_node_kind(nodes,lhs) > 24 || ast_node_kind(nodes,rhs) < 27 || ast_node_kind(nodes,rhs) > 27 { return false; }
-    if ast_node_data(nodes,rhs,3) < 30 || ast_node_data(nodes,rhs,3) > 30{ return false; }
+    if ast_node_kind(nodes,lhs) != 24 || ast_node_kind(nodes,rhs) != 27 {
+        return false;
+    }
+    if ast_node_data(nodes,rhs,3) != 30 { return false; }
 
     let ls: i64 = ast_node_data(nodes,lhs,1);
     let le: i64 = ast_node_data(nodes,lhs,2);
+    let lp: i64 = tc_find_var(state,source,vars,ls,le);
+    if lp < 0 { return false; }
+
+    let reduction_type: i64 = list_i64_get(vars,lp+2);
+    if reduction_type != 1 && reduction_type != 2 { return false; }
+    if tc_expr(state,source,rhs,vars) != reduction_type { return false; }
+
     let left: i64 = ast_node_data(nodes,rhs,4);
     let right: i64 = ast_node_data(nodes,rhs,5);
 
-    if left >= 0 && ast_node_kind(nodes,left) == 24 {
-        if str_eq(str_slice(source,ls,le),
-            str_slice(source,ast_node_data(nodes,left,1),ast_node_data(nodes,left,2))) {
-            if right >= 0 && ast_node_kind(nodes,right) == 20 { return true; }
-            if right >= 0 && ast_node_kind(nodes,right) == 24 {
-                if !(str_eq(str_slice(source,ls,le),
-                    str_slice(source,ast_node_data(nodes,right,1),ast_node_data(nodes,right,2)))){
-                    return tc_expr(state,source,rhs,vars) == 1;
+    if left >= 0 && ast_node_kind(nodes,left) == 24 &&
+       str_eq(str_slice(source,ls,le),
+              str_slice(source,ast_node_data(nodes,left,1),
+                              ast_node_data(nodes,left,2))) {
+        if right >= 0 {
+            if ast_node_kind(nodes,right) == 24 {
+                let rp: i64 = tc_find_var(state,source,vars,
+                    ast_node_data(nodes,right,1),ast_node_data(nodes,right,2));
+                if rp == list_i64_get(state,10) * 5 { return true; }
+            } else {
+                if reduction_type == 2 && ast_node_kind(nodes,right) == 21 {
+                    return true;
                 }
             }
         }
     }
 
-    if right >= 0 && ast_node_kind(nodes,right) == 24 {
-        if str_eq(str_slice(source,ls,le),
-            str_slice(source,ast_node_data(nodes,right,1),ast_node_data(nodes,right,2))) {
-            if left >= 0 && ast_node_kind(nodes,left) == 20 { return true; }
-            if left >= 0 && ast_node_kind(nodes,left) == 24 {
-                if !(str_eq(str_slice(source,ls,le),
-                    str_slice(source,ast_node_data(nodes,left,1),ast_node_data(nodes,left,2)))) {
-                    return tc_expr(state,source,rhs,vars) == 1;
+    if right >= 0 && ast_node_kind(nodes,right) == 24 &&
+       str_eq(str_slice(source,ls,le),
+              str_slice(source,ast_node_data(nodes,right,1),
+                              ast_node_data(nodes,right,2))) {
+        if left >= 0 {
+            if ast_node_kind(nodes,left) == 24 {
+                let lp2: i64 = tc_find_var(state,source,vars,
+                    ast_node_data(nodes,left,1),ast_node_data(nodes,left,2));
+                if lp2 == list_i64_get(state,10) * 5 { return true; }
+            } else {
+                if (reduction_type == 1 && ast_node_kind(nodes,left) == 20) ||
+                   (reduction_type == 2 && ast_node_kind(nodes,left) == 21) {
+                    return true;
                 }
             }
         }
@@ -456,7 +474,9 @@ fn tc_block(state: i64, source: str, block: i64, vars: i64, return_type: i64, is
                     list_i64_set(state,2,ast_node_data(list_i64_get(state,0),statement,1));
                 } else {
                     if list_i64_get(vars,p+3) == 0 ||
-                       (is_parallel && p / 5 < list_i64_get(state,10)) ||
+                       (is_parallel && p / 5 < list_i64_get(state,10) &&
+                        ((list_i64_get(vars,p+2) != 1 && list_i64_get(vars,p+2) != 2) ||
+                         tc_parallel_reduction(state,source,a,b,vars) == false)) ||
                        actual < list_i64_get(vars,p+2) ||
                        actual > list_i64_get(vars,p+2) {
                         list_i64_set(state,1,1);
@@ -467,7 +487,7 @@ fn tc_block(state: i64, source: str, block: i64, vars: i64, return_type: i64, is
                 if kind == 9 {
                     let mut invalid: bool = is_parallel;
                     if a < 0 {
-                        if return_type < 5 || return_type > 5 {
+                        if return_type != 5 {
                             invalid = true;
                         }
                     } else {
@@ -505,7 +525,7 @@ fn tc_block(state: i64, source: str, block: i64, vars: i64, return_type: i64, is
                             if kind == 12 || kind == 13 {
                                 let from_type: i64 = tc_expr(state,source,a,vars);
                                 let to_type: i64 = tc_expr(state,source,b,vars);
-                                if (is_parallel && kind == 13) || from_type < 1 || from_type > 1|| to_type < 1 || to_type > 1{
+                                if (is_parallel && kind == 13) || from_type != 1|| to_type != 1{
                                     list_i64_set(state,1,1);
                                     list_i64_set(state,2,ast_node_data(list_i64_get(state,0),statement,1));
                                 }
@@ -623,7 +643,7 @@ pub fn typecheck(state: i64, source: str, nodes: i64) -> bool {
             let body: i64 = ast_function_body(nodes,declaration);
             if body >= 0 {
                 let returns: bool = tc_block(state, source,body,vars,ret,false);
-                if (ret < 5 || ret > 5) && !returns {
+                if (ret != 5 ) && !returns {
                     list_i64_set(state,1,1);
                     list_i64_set(state,2,ns);
                 }
