@@ -33,7 +33,7 @@ Without an available OpenMP runtime, supported parallel loops execute through th
 ## Build
 
 ```bash
-git clone https://github.com/hchunhei81-cyber/Velox.git
+git clone https://github.com/novarift1/Velox.git
 cd Velox
 cargo build --release
 ```
