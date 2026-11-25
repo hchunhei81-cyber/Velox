@@ -9,6 +9,8 @@ pub enum Tok {
     Let,
     Mut,
     Return,
+    Break,
+    Continue,
     If,
     Else,
     While,
@@ -30,10 +32,20 @@ pub enum Tok {
     DotDot,
     Dot,
     Plus,
+    PlusPlus,
+    PlusEq,
     Minus,
+    MinusMinus,
+    MinusEq,
     Star,
+    StarEq,
     Slash,
+    SlashEq,
     Percent,
+    Caret,
+    Question,
+    Shl,
+    Shr,
     Eq,
     EqEq,
     NotEq,
@@ -41,6 +53,8 @@ pub enum Tok {
     Gt,
     Le,
     Ge,
+    Amp,
+    Pipe,
     AndAnd,
     OrOr,
     Bang,
@@ -169,6 +183,8 @@ impl<'a> Lexer<'a> {
                     "let" => Tok::Let,
                     "mut" => Tok::Mut,
                     "return" => Tok::Return,
+                    "break" => Tok::Break,
+                    "continue" => Tok::Continue,
                     "if" => Tok::If,
                     "else" => Tok::Else,
                     "while" => Tok::While,
@@ -196,12 +212,34 @@ impl<'a> Lexer<'a> {
                 while self.peek().is_ascii_digit() {
                     self.bump();
                 }
-                // Floating-point literal: for example, 3.14; require a digit after the decimal point.
+
+                let mut is_float = false;
+
+                // Decimal fraction; preserve `1..10` as a range.
                 if self.peek() == b'.' && self.peek2().is_ascii_digit() {
-                    self.bump(); // .
+                    is_float = true;
+                    self.bump();
                     while self.peek().is_ascii_digit() {
                         self.bump();
                     }
+                }
+
+                // Scientific notation: 1e3, 1E-3, 2.5e+8.
+                if matches!(self.peek(), b'e' | b'E') {
+                    is_float = true;
+                    self.bump();
+                    if matches!(self.peek(), b'+' | b'-') {
+                        self.bump();
+                    }
+                    if !self.peek().is_ascii_digit() {
+                        return Err("malformed exponent: expected a digit".into());
+                    }
+                    while self.peek().is_ascii_digit() {
+                        self.bump();
+                    }
+                }
+
+                if is_float {
                     let f: f64 = std::str::from_utf8(&self.src[start..self.pos])
                         .unwrap()
                         .parse()
@@ -215,6 +253,7 @@ impl<'a> Lexer<'a> {
                     });
                     continue;
                 }
+
                 let n: i64 = std::str::from_utf8(&self.src[start..self.pos])
                     .unwrap()
                     .parse()
@@ -289,16 +328,42 @@ impl<'a> Lexer<'a> {
                 b',' => Tok::Comma,
                 b';' => Tok::Semi,
                 b':' => Tok::Colon,
-                b'+' => Tok::Plus,
-                b'*' => Tok::Star,
-                b'/' => Tok::Slash,
+                b'+' => {
+                    if self.peek() == b'+' {
+                        self.bump();
+                        Tok::PlusPlus
+                    } else if self.peek() == b'=' {
+                        self.bump();
+                        Tok::PlusEq
+                    } else {
+                        Tok::Plus
+                    }
+                }
+                b'*' => {
+                    if self.peek() == b'=' {
+                        self.bump();
+                        Tok::StarEq
+                    } else {
+                        Tok::Star
+                    }
+                }
+                b'/' => {
+                    if self.peek() == b'=' {
+                        self.bump();
+                        Tok::SlashEq
+                    } else {
+                        Tok::Slash
+                    }
+                }
                 b'%' => Tok::Percent,
+                b'^' => Tok::Caret,
+                b'?' => Tok::Question,
                 b'&' => {
                     if self.peek() == b'&' {
                         self.bump();
                         Tok::AndAnd
                     } else {
-                        return Err("expected `&&`".into());
+                        Tok::Amp
                     }
                 }
                 b'|' => {
@@ -306,7 +371,7 @@ impl<'a> Lexer<'a> {
                         self.bump();
                         Tok::OrOr
                     } else {
-                        return Err("expected `||`".into());
+                        Tok::Pipe
                     }
                 }
                 b'!' => {
@@ -321,6 +386,12 @@ impl<'a> Lexer<'a> {
                     if self.peek() == b'>' {
                         self.bump();
                         Tok::Arrow
+                    } else if self.peek() == b'-' {
+                        self.bump();
+                        Tok::MinusMinus
+                    } else if self.peek() == b'=' {
+                        self.bump();
+                        Tok::MinusEq
                     } else {
                         Tok::Minus
                     }
@@ -337,6 +408,9 @@ impl<'a> Lexer<'a> {
                     if self.peek() == b'=' {
                         self.bump();
                         Tok::Le
+                    } else if self.peek() == b'<' {
+                        self.bump();
+                        Tok::Shl
                     } else {
                         Tok::Lt
                     }
@@ -345,6 +419,9 @@ impl<'a> Lexer<'a> {
                     if self.peek() == b'=' {
                         self.bump();
                         Tok::Ge
+                    } else if self.peek() == b'>' {
+                        self.bump();
+                        Tok::Shr
                     } else {
                         Tok::Gt
                     }
@@ -423,5 +500,36 @@ mod syntax_keyword_tests {
         assert!(tokens.contains(&Tok::Public));
         assert!(tokens.contains(&Tok::Ident("public".into())));
         assert!(tokens.contains(&Tok::Ident("private".into())));
+    }
+}
+
+#[cfg(test)]
+mod scientific_notation_tests {
+    use super::*;
+
+    #[test]
+    fn scientific_notation_is_tokenized_as_float() {
+        let tokens = Lexer::new("1e3 1E-3 2.5e+8").tokenize().unwrap();
+        assert!(tokens.contains(&Tok::Float(1000.0)));
+        assert!(tokens.contains(&Tok::Float(0.001)));
+        assert!(tokens.contains(&Tok::Float(250_000_000.0)));
+    }
+
+    #[test]
+    fn incomplete_exponents_are_rejected() {
+        for source in ["1e", "1e+", "2.5E-"] {
+            assert!(
+                Lexer::new(source).tokenize().is_err(),
+                "accepted malformed literal: {source}"
+            );
+        }
+    }
+
+    #[test]
+    fn range_operator_is_not_consumed_as_decimal_point() {
+        let tokens = Lexer::new("1..10").tokenize().unwrap();
+        assert!(tokens.contains(&Tok::Int(1)));
+        assert!(tokens.contains(&Tok::Int(10)));
+        assert!(tokens.iter().any(|t| matches!(t, Tok::DotDot)));
     }
 }

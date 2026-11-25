@@ -1149,3 +1149,44 @@ fn main() -> void {
         "true\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\nfalse\nfalse"
     );
 }
+
+#[test]
+fn f64_print_preserves_round_trip_precision() {
+    let case = Case::new(
+        r#"
+fn main() -> void {
+    println(0.1 + 0.2);
+    let pi: f64 = 3.141592653589793;
+    println(pi);
+}
+"#,
+    );
+
+    let build = case.compile();
+    assert!(build.status.success(), "compile failed: {}", stderr(&build));
+
+    let run = case.run();
+    assert!(run.status.success());
+    assert_eq!(stdout(&run), "0.30000000000000004\n3.1415926535897931\n");
+}
+
+#[test]
+fn scientific_notation_literals_work() {
+    let case = Case::new(
+        r#"
+fn main() -> void {
+    println(1e3 == 1000.0);
+    println(2.5E+2 == 250.0);
+    println(1.25e-2 > 0.0124);
+    println(1e-3 + 2.5e-4 > 0.0012);
+}
+"#,
+    );
+
+    let build = case.compile();
+    assert!(build.status.success(), "compile failed: {}", stderr(&build));
+
+    let run = case.run();
+    assert!(run.status.success(), "runtime failed: {}", stderr(&run));
+    assert_eq!(stdout(&run), "true\ntrue\ntrue\ntrue\n");
+}

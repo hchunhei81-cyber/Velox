@@ -148,6 +148,23 @@ fn main() {
 }
 VX
 
+cat > "$WORK/f64-print.vx" <<'VX'
+fn main() {
+    println(0.1 + 0.2);
+    let pi: f64 = 3.141592653589793;
+    println(pi);
+}
+VX
+
+cat > "$WORK/scientific-notation.vx" <<'VX'
+fn main() {
+    println(1e3 == 1000.0);
+    println(2.5E+2 == 250.0);
+    println(1.25e-2 > 0.0124);
+    println(1e-3 + 2.5e-4 > 0.0012);
+}
+VX
+
 cat > "$WORK/not-equal.vx" <<'VX'
 fn main() {
     println(1 == 1);
@@ -252,6 +269,18 @@ fn main() {
         println("PARALLEL F64 REDUCTION COMPILE FAIL");
     }
 
+    if compile_file("$WORK/f64-print.vx", "$WORK/f64-print") {
+        println("F64 PRINT COMPILE PASS");
+    } else {
+        println("F64 PRINT COMPILE FAIL");
+    }
+
+    if compile_file("$WORK/scientific-notation.vx", "$WORK/scientific-notation") {
+        println("SCIENTIFIC NOTATION COMPILE PASS");
+    } else {
+        println("SCIENTIFIC NOTATION COMPILE FAIL");
+    }
+
     if compile_file("$WORK/not-equal.vx", "$WORK/not-equal") {
         println("NOT EQUAL COMPILE PASS");
     } else {
@@ -323,6 +352,28 @@ if [ "$output" != "true" ]; then
     exit 1
 fi
 echo "F64 REDUCTION EXECUTION PASS"
+
+grep -q "F64 PRINT COMPILE PASS" "$WORK/result.log"
+clang -std=c11 -O2 "$WORK/f64-print.c" -o "$WORK/f64-print"
+output=$("$WORK/f64-print")
+expected=$(printf '0.30000000000000004\n3.1415926535897931')
+if [ "$output" != "$expected" ]; then
+    echo "F64 PRINT OUTPUT MISMATCH"
+    printf 'Expected:\\n%s\\nActual:\\n%s\\n' "$expected" "$output"
+    exit 1
+fi
+echo "F64 PRINT EXECUTION PASS"
+
+grep -q "SCIENTIFIC NOTATION COMPILE PASS" "$WORK/result.log"
+clang -std=c11 -O2 "$WORK/scientific-notation.c" -o "$WORK/scientific-notation"
+output=$("$WORK/scientific-notation")
+expected=$(printf 'true\ntrue\ntrue\ntrue')
+if [ "$output" != "$expected" ]; then
+    echo "SCIENTIFIC NOTATION OUTPUT MISMATCH"
+    printf 'Expected:\n%s\nActual:\n%s\n' "$expected" "$output"
+    exit 1
+fi
+echo "SCIENTIFIC NOTATION EXECUTION PASS"
 
 grep -q "NOT EQUAL COMPILE PASS" "$WORK/result.log"
 clang -std=c11 -O2 "$WORK/not-equal.c" -o "$WORK/not-equal"

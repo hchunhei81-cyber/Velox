@@ -25,6 +25,7 @@ pub enum Expr {
     Neg(Box<Expr>),
     Var(String),
     Bin(Box<Expr>, BinOp, Box<Expr>),
+    Ternary(Box<Expr>, Box<Expr>, Box<Expr>),
     Call(String, Vec<Expr>),
     PythonCall {
         module: String,
@@ -51,6 +52,11 @@ pub enum BinOp {
     Ge,
     And,
     Or,
+    BitAnd,
+    BitOr,
+    BitXor,
+    Shl,
+    Shr,
 }
 
 #[derive(Debug, Clone)]
@@ -64,6 +70,8 @@ pub enum Stmt {
     Assign(String, Expr),
     FieldAssign(Expr, Expr),
     Return(Option<Expr>),
+    Break,
+    Continue,
     If(Expr, Vec<Stmt>, Vec<Stmt>),
     While(Expr, Vec<Stmt>),
     Expr(Expr),

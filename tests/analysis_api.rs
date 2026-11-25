@@ -187,3 +187,46 @@ fn analysis_api_points_to_struct_init_with_missing_field() {
         "struct Point { x: i64, y: i64 }\nfn main() -> void {\n    let p = Point { x: 1 };\n}\n";
     assert_diagnostic_span(source, "Point", 3);
 }
+
+#[test]
+fn analysis_api_points_to_immutable_field_assignment() {
+    let source = "struct Point { x: i64 }\nfn main() -> void {\n    let p = Point { x: 1 };\n    p.x = 2;\n}\n";
+    assert_diagnostic_span(source, "p.x", 4);
+}
+
+#[test]
+fn analysis_api_points_to_undefined_field_root() {
+    let source = "struct Point { x: i64 }\nfn main() -> void {\n    missing.x = 2;\n}\n";
+    assert_diagnostic_span(source, "missing.x", 3);
+}
+
+#[test]
+fn analysis_api_points_to_nonlocal_field_assignment_target() {
+    let source = "struct Point { x: i64 }\nfn make_point() -> Point {\n    return Point { x: 1 };\n}\nfn main() -> void {\n    make_point().x = 2;\n}\n";
+    assert_diagnostic_span(source, "make_point().x", 6);
+}
+
+#[test]
+fn analysis_api_points_to_invalid_for_start_bound() {
+    let source = "fn main() -> void {\n    for i in true..10 {\n        print(i);\n    }\n}\n";
+    assert_diagnostic_span(source, "true", 2);
+}
+
+#[test]
+fn analysis_api_points_to_invalid_for_end_bound() {
+    let source = "fn main() -> void {\n    for i in 0..true {\n        print(i);\n    }\n}\n";
+    assert_diagnostic_span(source, "true", 2);
+}
+
+#[test]
+fn analysis_api_points_to_invalid_parallel_for_bound() {
+    let source = "fn main() -> void {\n    parallel for i in true..10 {\n        let x: i64 = i;\n    }\n}\n";
+    assert_diagnostic_span(source, "true", 2);
+}
+
+#[test]
+fn analysis_api_points_to_return_inside_parallel_for() {
+    let source =
+        "fn main() -> void {\n    parallel for i in 0..10 {\n        return i;\n    }\n}\n";
+    assert_diagnostic_span(source, "i", 3);
+}

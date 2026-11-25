@@ -251,6 +251,16 @@ impl Parser {
                     init,
                 })
             }
+            Tok::Break => {
+                self.bump();
+                self.eat(&Tok::Semi)?;
+                Ok(Stmt::Break)
+            }
+            Tok::Continue => {
+                self.bump();
+                self.eat(&Tok::Semi)?;
+                Ok(Stmt::Continue)
+            }
             Tok::Return => {
                 self.bump();
                 if *self.peek() == Tok::Semi {
@@ -316,14 +326,40 @@ impl Parser {
             }
             _ => {
                 let e = self.expr()?;
-                if *self.peek() == Tok::Eq {
+                let compound = match self.peek() {
+                    Tok::PlusEq => Some(BinOp::Add),
+                    Tok::MinusEq => Some(BinOp::Sub),
+                    Tok::StarEq => Some(BinOp::Mul),
+                    Tok::SlashEq => Some(BinOp::Div),
+                    _ => None,
+                };
+                if *self.peek() == Tok::Eq || compound.is_some() {
+                    let op = compound;
                     self.bump();
                     let rhs = self.expr()?;
                     self.eat(&Tok::Semi)?;
+                    let value = match op {
+                        Some(op) => combine_expr(e.clone(), op, rhs),
+                        None => rhs,
+                    };
                     match strip_located(&e) {
-                        Expr::Var(name) => Ok(Stmt::Assign(name.clone(), rhs)),
-                        Expr::Field(_, _) => Ok(Stmt::FieldAssign(e, rhs)),
+                        Expr::Var(name) => Ok(Stmt::Assign(name.clone(), value)),
+                        Expr::Field(_, _) => Ok(Stmt::FieldAssign(e, value)),
                         _ => Err("invalid assign target".into()),
+                    }
+                } else if *self.peek() == Tok::PlusPlus || *self.peek() == Tok::MinusMinus {
+                    let op = if *self.peek() == Tok::PlusPlus {
+                        BinOp::Add
+                    } else {
+                        BinOp::Sub
+                    };
+                    self.bump();
+                    self.eat(&Tok::Semi)?;
+                    let value = combine_expr(e.clone(), op, Expr::Int(1));
+                    match strip_located(&e) {
+                        Expr::Var(name) => Ok(Stmt::Assign(name.clone(), value)),
+                        Expr::Field(_, _) => Ok(Stmt::FieldAssign(e, value)),
+                        _ => Err("invalid increment/decrement target".into()),
                     }
                 } else {
                     self.eat(&Tok::Semi)?;
@@ -357,7 +393,21 @@ impl Parser {
     }
 
     fn expr(&mut self) -> Result<Expr, String> {
-        self.logical_or()
+        let cond = self.logical_or()?;
+        if *self.peek() != Tok::Question {
+            return Ok(cond);
+        }
+        self.bump();
+        let yes = self.expr()?;
+        self.eat(&Tok::Colon)?;
+        let no = self.expr()?;
+        let start = expr_span(&cond).map(|s| s.start);
+        let end = expr_span(&no).map(|s| s.end);
+        let node = Expr::Ternary(Box::new(cond), Box::new(yes), Box::new(no));
+        Ok(match (start, end) {
+            (Some(start), Some(end)) => located(node, Span { start, end }),
+            _ => node,
+        })
     }
 
     fn logical_or(&mut self) -> Result<Expr, String> {
@@ -371,17 +421,47 @@ impl Parser {
     }
 
     fn logical_and(&mut self) -> Result<Expr, String> {
-        let mut left = self.cmp()?;
+        let mut left = self.bit_or()?;
         while *self.peek() == Tok::AndAnd {
             self.bump();
-            let right = self.cmp()?;
+            let right = self.bit_or()?;
             left = combine_expr(left, BinOp::And, right);
         }
         Ok(left)
     }
 
+    fn bit_or(&mut self) -> Result<Expr, String> {
+        let mut left = self.bit_xor()?;
+        while *self.peek() == Tok::Pipe {
+            self.bump();
+            let right = self.bit_xor()?;
+            left = combine_expr(left, BinOp::BitOr, right);
+        }
+        Ok(left)
+    }
+
+    fn bit_xor(&mut self) -> Result<Expr, String> {
+        let mut left = self.bit_and()?;
+        while *self.peek() == Tok::Caret {
+            self.bump();
+            let right = self.bit_and()?;
+            left = combine_expr(left, BinOp::BitXor, right);
+        }
+        Ok(left)
+    }
+
+    fn bit_and(&mut self) -> Result<Expr, String> {
+        let mut left = self.cmp()?;
+        while *self.peek() == Tok::Amp {
+            self.bump();
+            let right = self.cmp()?;
+            left = combine_expr(left, BinOp::BitAnd, right);
+        }
+        Ok(left)
+    }
+
     fn cmp(&mut self) -> Result<Expr, String> {
-        let mut l = self.add()?;
+        let mut l = self.shift()?;
         loop {
             let op = match self.peek() {
                 Tok::EqEq => BinOp::Eq,
@@ -393,10 +473,25 @@ impl Parser {
                 _ => break,
             };
             self.bump();
-            let r = self.add()?;
+            let r = self.shift()?;
             l = combine_expr(l, op, r);
         }
         Ok(l)
+    }
+
+    fn shift(&mut self) -> Result<Expr, String> {
+        let mut left = self.add()?;
+        loop {
+            let op = match self.peek() {
+                Tok::Shl => BinOp::Shl,
+                Tok::Shr => BinOp::Shr,
+                _ => break,
+            };
+            self.bump();
+            let right = self.add()?;
+            left = combine_expr(left, op, right);
+        }
+        Ok(left)
     }
 
     fn add(&mut self) -> Result<Expr, String> {

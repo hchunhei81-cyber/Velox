@@ -221,6 +221,16 @@ static int64_t velox_i64_neg(int64_t a) {
     return -a;
 }
 
+static int64_t velox_i64_shl(int64_t a, int64_t b) {
+    if (b < 0 || b >= 64) velox_i64_fail("invalid i64 shift count");
+    return (int64_t)((uint64_t)a << (unsigned)b);
+}
+
+static int64_t velox_i64_shr(int64_t a, int64_t b) {
+    if (b < 0 || b >= 64) velox_i64_fail("invalid i64 shift count");
+    return a >> (unsigned)b;
+}
+
 "#,
         );
         if !p.python_imports.is_empty() {
@@ -501,6 +511,8 @@ static double velox_py_call_f64(const char *module_name,
                     }
                 }
             },
+            Stmt::Break => self.out.push_str(&format!("{}break;\n", pad)),
+            Stmt::Continue => self.out.push_str(&format!("{}continue;\n", pad)),
             Stmt::If(c, t, e) => {
                 let cx = self.expr(c);
                 let saved = self.var_ty.clone();
@@ -662,6 +674,7 @@ static double velox_py_call_f64(const char *module_name,
     fn expr_ty(&self, e: &Expr) -> Ty {
         match e {
             Expr::Located(inner, _) => self.expr_ty(inner),
+            Expr::Ternary(_, yes, _) => self.expr_ty(yes),
             Expr::Int(_) => Ty::I64,
             Expr::Float(_) => Ty::F64,
             Expr::Bool(_) => Ty::Bool,
@@ -706,6 +719,12 @@ static double velox_py_call_f64(const char *module_name,
     fn expr(&mut self, e: &Expr) -> String {
         match e {
             Expr::Located(inner, _) => self.expr(inner),
+            Expr::Ternary(cond, yes, no) => {
+                let c = self.expr(cond);
+                let y = self.expr(yes);
+                let n = self.expr(no);
+                format!("({} ? {} : {})", c, y, n)
+            }
             Expr::Not(inner) => format!("(!{})", self.expr(inner)),
             Expr::Neg(inner) => {
                 let value = self.expr(inner);
@@ -767,6 +786,15 @@ static double velox_py_call_f64(const char *module_name,
                     }
                 }
 
+                if matches!(op, BinOp::Shl | BinOp::Shr) {
+                    let helper = if matches!(op, BinOp::Shl) {
+                        "velox_i64_shl"
+                    } else {
+                        "velox_i64_shr"
+                    };
+                    return format!("{}((int64_t)({}), (int64_t)({}))", helper, lo, ro);
+                }
+
                 let o = match op {
                     BinOp::Add => "+",
                     BinOp::Sub => "-",
@@ -781,6 +809,10 @@ static double velox_py_call_f64(const char *module_name,
                     BinOp::Ge => ">=",
                     BinOp::And => "&&",
                     BinOp::Or => "||",
+                    BinOp::BitAnd => "&",
+                    BinOp::BitOr => "|",
+                    BinOp::BitXor => "^",
+                    BinOp::Shl | BinOp::Shr => unreachable!("shifts handled above"),
                 };
                 format!("({} {} {})", lo, o, ro)
             }
@@ -839,7 +871,7 @@ static double velox_py_call_f64(const char *module_name,
 
                     return match at {
                         Ty::I64 => format!("printf(\"%lld{}\", (long long)({}))", newline, value),
-                        Ty::F64 => format!("printf(\"%g{}\", (double)({}))", newline, value),
+                        Ty::F64 => format!("printf(\"%.17g{}\", (double)({}))", newline, value),
                         Ty::Bool => format!(
                             "printf(\"%s{}\", ({} ? \"true\" : \"false\"))",
                             newline, value
@@ -1041,6 +1073,12 @@ fn analyze_parallel_block(
                 return Err("E0604: return is not allowed inside parallel for".to_string());
             }
 
+            Stmt::Break | Stmt::Continue => {
+                return Err(
+                    "E0606: break and continue are not allowed inside parallel for".to_string(),
+                );
+            }
+
             Stmt::For {
                 var,
                 start,
@@ -1087,6 +1125,12 @@ fn count_parallel_reads(
             count_parallel_reads(right, outer, locals, access);
         }
 
+        Expr::Ternary(cond, yes, no) => {
+            count_parallel_reads(cond, outer, locals, access);
+            count_parallel_reads(yes, outer, locals, access);
+            count_parallel_reads(no, outer, locals, access);
+        }
+
         Expr::Call(_, args) | Expr::PythonCall { args, .. } => {
             for arg in args {
                 count_parallel_reads(arg, outer, locals, access);
@@ -1130,6 +1174,12 @@ fn count_var_occurrences(expr: &Expr, target: &str) -> usize {
 
         Expr::Bin(left, _, right) => {
             count_var_occurrences(left, target) + count_var_occurrences(right, target)
+        }
+
+        Expr::Ternary(cond, yes, no) => {
+            count_var_occurrences(cond, target)
+                + count_var_occurrences(yes, target)
+                + count_var_occurrences(no, target)
         }
 
         Expr::Call(_, args) | Expr::PythonCall { args, .. } => args

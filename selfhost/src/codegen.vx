@@ -289,6 +289,10 @@ fn cg_expr(source: str, nodes: i64, node: i64, params: i64, body: i64) -> str {
             if str_eq(value_type,"velox_str") {
                 return str_concat("printf(\"%s\\n\", ", str_concat(value, ")"));
             }
+            if str_eq(value_type,"double") {
+                return str_concat("printf(\"%.17g\\n\", (double)(",
+                    str_concat(value, "))"));
+            }
             if str_eq(value_type,"bool") {
                 return str_concat("printf(\"%s\\n\", (", str_concat(
                     value, ") ? \"true\" : \"false\")"));

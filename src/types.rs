@@ -83,6 +83,7 @@ pub struct Checker {
     structs: HashMap<String, StructInfo>,
     python_imports: HashSet<String>,
     error_span: Cell<Option<Span>>,
+    loop_depth: Cell<usize>,
 }
 
 fn strip_located(mut expr: &Expr) -> &Expr {
@@ -159,6 +160,7 @@ impl Checker {
             structs: HashMap::new(),
             python_imports: HashSet::new(),
             error_span: Cell::new(None),
+            loop_depth: Cell::new(0),
         }
     }
 
@@ -441,6 +443,17 @@ impl Checker {
                 }
                 Ok(false)
             }
+            Stmt::Break | Stmt::Continue => {
+                if parallel {
+                    return Err(
+                        "E0403: break and continue are not allowed inside parallel for".into(),
+                    );
+                }
+                if self.loop_depth.get() == 0 {
+                    return Err("E0405: break and continue are only valid inside loops".into());
+                }
+                Ok(false)
+            }
             Stmt::Return(e) => {
                 if parallel {
                     if let Some(expr) = e {
@@ -483,7 +496,10 @@ impl Checker {
                     return Err("E0401: `while` condition must have type `bool`".into());
                 }
                 let mut inner = env.clone();
-                self.check_block(body, &mut inner, ret, origin, parallel)?;
+                self.loop_depth.set(self.loop_depth.get() + 1);
+                let result = self.check_block(body, &mut inner, ret, origin, parallel);
+                self.loop_depth.set(self.loop_depth.get() - 1);
+                result?;
                 Ok(false)
             }
             Stmt::Expr(e) => {
@@ -519,7 +535,10 @@ impl Checker {
                         mutable: false,
                     },
                 );
-                self.check_block(body, &mut inner, ret, origin, parallel)?;
+                self.loop_depth.set(self.loop_depth.get() + 1);
+                let result = self.check_block(body, &mut inner, ret, origin, parallel);
+                self.loop_depth.set(self.loop_depth.get() - 1);
+                result?;
                 Ok(false)
             }
             Stmt::ParallelFor {
@@ -554,7 +573,10 @@ impl Checker {
                         mutable: false,
                     },
                 );
-                self.check_block(body, &mut inner, ret, origin, true)?;
+                self.loop_depth.set(self.loop_depth.get() + 1);
+                let result = self.check_block(body, &mut inner, ret, origin, true);
+                self.loop_depth.set(self.loop_depth.get() - 1);
+                result?;
                 Ok(false)
             }
         }
@@ -581,6 +603,19 @@ impl Checker {
     ) -> Result<Ty, String> {
         match e {
             Expr::Located(inner, _) => self.check_expr(inner, env, origin),
+            Expr::Ternary(cond, yes, no) => {
+                if self.check_expr(cond, env, origin)? != Ty::Bool {
+                    self.mark_error_span(expr_span(cond));
+                    return Err("E0308: ternary condition must be bool".into());
+                }
+                let yt = self.check_expr(yes, env, origin)?;
+                let nt = self.check_expr(no, env, origin)?;
+                if yt != nt {
+                    self.mark_error_span(expr_span(no));
+                    return Err("E0308: ternary branches must have the same type".into());
+                }
+                Ok(yt)
+            }
             Expr::Int(_) => Ok(Ty::I64),
             Expr::Float(_) => Ok(Ty::F64),
             Expr::Bool(_) => Ok(Ty::Bool),
@@ -657,6 +692,9 @@ impl Checker {
 
                 let invalid_left = match op {
                     BinOp::And | BinOp::Or => a != Ty::Bool,
+                    BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor | BinOp::Shl | BinOp::Shr => {
+                        a != Ty::I64
+                    }
                     BinOp::Eq | BinOp::Ne => false,
                     BinOp::Lt
                     | BinOp::Gt
@@ -670,6 +708,9 @@ impl Checker {
                 };
                 let invalid_right = match op {
                     BinOp::And | BinOp::Or => b != Ty::Bool,
+                    BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor | BinOp::Shl | BinOp::Shr => {
+                        a != Ty::I64 || b != Ty::I64
+                    }
                     BinOp::Eq | BinOp::Ne => a != b,
                     BinOp::Lt
                     | BinOp::Gt
@@ -688,6 +729,13 @@ impl Checker {
                 }
 
                 match op {
+                    BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor | BinOp::Shl | BinOp::Shr => {
+                        if a == Ty::I64 && b == Ty::I64 {
+                            Ok(Ty::I64)
+                        } else {
+                            Err("E0308: bitwise operators require two i64 operands".into())
+                        }
+                    }
                     BinOp::And | BinOp::Or => {
                         if a == Ty::Bool && b == Ty::Bool {
                             Ok(Ty::Bool)

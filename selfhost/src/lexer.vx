@@ -115,6 +115,27 @@ pub fn tokenize(source: str) -> i64 {
                                     pos = pos + 1;
                                 }
                             }
+
+                            // Scientific notation: optional exponent sign, mandatory digits.
+                            if pos < length &&
+                               (lex_char(source, pos, length) == 101 ||
+                                lex_char(source, pos, length) == 69) {
+                                kind = 3;
+                                pos = pos + 1;
+                                if pos < length &&
+                                   (lex_char(source, pos, length) == 43 ||
+                                    lex_char(source, pos, length) == 45) {
+                                    pos = pos + 1;
+                                }
+                                if pos >= length ||
+                                   lex_digit(lex_char(source, pos, length)) == false {
+                                    lex_push(tokens, -1, start, pos);
+                                    return tokens;
+                                }
+                                while pos < length && lex_digit(lex_char(source, pos, length)) {
+                                    pos = pos + 1;
+                                }
+                            }
                             lex_push(tokens, kind, start, pos);
                         } else {
                             if c == 34 {

@@ -592,7 +592,9 @@ fn semantic_tokens(source: &str) -> Value {
             | Tok::In
             | Tok::Parallel
             | Tok::Public
-            | Tok::Export => Some(9),
+            | Tok::Export
+            | Tok::Break
+            | Tok::Continue => Some(9),
 
             Tok::True | Tok::False => Some(10),
             Tok::Int(_) | Tok::Float(_) => Some(6),
@@ -614,7 +616,19 @@ fn semantic_tokens(source: &str) -> Value {
             | Tok::OrOr
             | Tok::Bang
             | Tok::Arrow
-            | Tok::DotDot => Some(8),
+            | Tok::DotDot
+            | Tok::PlusPlus
+            | Tok::PlusEq
+            | Tok::MinusMinus
+            | Tok::MinusEq
+            | Tok::StarEq
+            | Tok::SlashEq
+            | Tok::Caret
+            | Tok::Question
+            | Tok::Shl
+            | Tok::Shr
+            | Tok::Amp
+            | Tok::Pipe => Some(8),
 
             Tok::Ident(name) => {
                 if name == "import" {
