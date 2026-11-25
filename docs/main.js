@@ -49,6 +49,8 @@ const translations = {
   }
 };
 
+/* ---------------- language ---------------- */
+
 let currentLanguage = localStorage.getItem("velox-language") || "en";
 const languageToggle = document.getElementById("languageToggle");
 
@@ -64,46 +66,83 @@ function setLanguage(language) {
     const key = element.dataset.i18nHtml;
     if (translations[language][key]) element.innerHTML = translations[language][key];
   });
-  languageToggle.textContent = language === "en" ? "中文" : "EN";
-  languageToggle.setAttribute("aria-label", language === "en" ? "切换到中文" : "Switch to English");
+  if (languageToggle) {
+    languageToggle.textContent = language === "en" ? "中文" : "EN";
+    languageToggle.setAttribute(
+      "aria-label",
+      language === "en" ? "切换到中文" : "Switch to English"
+    );
+  }
 }
 
-languageToggle.addEventListener("click", () => {
-  setLanguage(currentLanguage === "en" ? "zh" : "en");
-});
+if (languageToggle) {
+  languageToggle.addEventListener("click", () => {
+    setLanguage(currentLanguage === "en" ? "zh" : "en");
+  });
+}
+
+/* ---------------- mobile menu ---------------- */
 
 const menuToggle = document.getElementById("menuToggle");
 const mainNav = document.querySelector(".main-nav");
-menuToggle.addEventListener("click", () => {
-  const isOpen = mainNav.classList.toggle("open");
-  menuToggle.setAttribute("aria-expanded", String(isOpen));
-  menuToggle.setAttribute("aria-label", isOpen ? "Close navigation" : "Open navigation");
-});
-mainNav.querySelectorAll("a").forEach((link) => {
-  link.addEventListener("click", () => {
-    mainNav.classList.remove("open");
-    menuToggle.setAttribute("aria-expanded", "false");
+if (menuToggle && mainNav) {
+  menuToggle.addEventListener("click", () => {
+    const isOpen = mainNav.classList.toggle("open");
+    menuToggle.setAttribute("aria-expanded", String(isOpen));
+    menuToggle.setAttribute("aria-label", isOpen ? "Close navigation" : "Open navigation");
   });
-});
+  mainNav.querySelectorAll("a").forEach((link) => {
+    link.addEventListener("click", () => {
+      mainNav.classList.remove("open");
+      menuToggle.setAttribute("aria-expanded", "false");
+    });
+  });
+}
 
-document.getElementById("year").textContent = new Date().getFullYear();
+/* ---------------- year ---------------- */
 
-document.getElementById("copyCommands").addEventListener("click", async (event) => {
-  const commands = [
-    "cargo build --release",
-    "cargo run --release --bin veloxc -- hello.vx -o hello",
-    "./hello"
-  ].join("\n");
-  const button = event.currentTarget;
-  try {
-    await navigator.clipboard.writeText(commands);
-    button.textContent = translations[currentLanguage].copied;
-    window.setTimeout(() => {
-      button.textContent = translations[currentLanguage].copy;
-    }, 1600);
-  } catch {
-    button.textContent = "Unavailable";
-  }
-});
+const yearEl = document.getElementById("year");
+if (yearEl) yearEl.textContent = new Date().getFullYear();
+
+/* ---------------- copy commands ---------------- */
+
+const copyBtn = document.getElementById("copyCommands");
+if (copyBtn) {
+  copyBtn.addEventListener("click", async (event) => {
+    const commands = [
+      "cargo build --release",
+      "cargo run --release --bin veloxc -- hello.vx -o hello",
+      "./hello"
+    ].join("\n");
+    const button = event.currentTarget;
+    try {
+      await navigator.clipboard.writeText(commands);
+      button.textContent = translations[currentLanguage].copied;
+      window.setTimeout(() => {
+        button.textContent = translations[currentLanguage].copy;
+      }, 1600);
+    } catch {
+      button.textContent = "Unavailable";
+    }
+  });
+}
+
+/* ---------------- init ---------------- */
 
 setLanguage(currentLanguage);
+
+document.addEventListener("DOMContentLoaded", () => {
+  if (typeof window.createCursorRingField !== "function") return;
+  const canvas = document.getElementById("ring-field");
+  if (!canvas) return;
+
+  window.createCursorRingField(canvas, {
+    background: "#080b09",
+    colors: ["#71e59a", "#1e8f4b", "#0b1410"], // Velox 绿 → 深绿 → 近黑
+    density: 240,
+    dotSize: 90,
+    speed: 6,
+    ring: { push: 35, width: 8, radius: 10, turbulence: 50 },
+    trackWindow: true,
+  });
+});
