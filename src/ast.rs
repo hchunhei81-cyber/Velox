@@ -6,6 +6,7 @@ pub enum Ty {
     Str,
     Void,
     Struct(String),
+    ArrayI64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -21,11 +22,16 @@ pub enum Expr {
     Float(f64),
     Bool(bool),
     Str(String),
+    Array(Vec<Expr>),
+    Index(Box<Expr>, Box<Expr>),
+    Slice(Box<Expr>, Box<Expr>, Box<Expr>),
+    MethodCall(Box<Expr>, String, Vec<Expr>),
     Not(Box<Expr>),
     Neg(Box<Expr>),
     Var(String),
     Bin(Box<Expr>, BinOp, Box<Expr>),
     Ternary(Box<Expr>, Box<Expr>, Box<Expr>),
+    Match(Box<Expr>, Vec<(Option<i64>, Expr)>),
     Call(String, Vec<Expr>),
     PythonCall {
         module: String,
@@ -69,6 +75,7 @@ pub enum Stmt {
     },
     Assign(String, Expr),
     FieldAssign(Expr, Expr),
+    IndexAssign(Box<Expr>, Box<Expr>, Expr),
     Return(Option<Expr>),
     Break,
     Continue,
@@ -79,6 +86,11 @@ pub enum Stmt {
         var: String,
         start: Expr,
         end: Expr,
+        body: Vec<Stmt>,
+    },
+    ForEach {
+        var: String,
+        iter: Expr,
         body: Vec<Stmt>,
     },
     ParallelFor {

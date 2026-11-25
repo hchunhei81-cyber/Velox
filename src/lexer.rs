@@ -25,10 +25,13 @@ pub enum Tok {
     RParen,
     LBrace,
     RBrace,
+    LBracket,
+    RBracket,
     Comma,
     Semi,
     Colon,
     Arrow,
+    FatArrow,
     DotDot,
     Dot,
     Plus,
@@ -325,6 +328,8 @@ impl<'a> Lexer<'a> {
                 b')' => Tok::RParen,
                 b'{' => Tok::LBrace,
                 b'}' => Tok::RBrace,
+                b'[' => Tok::LBracket,
+                b']' => Tok::RBracket,
                 b',' => Tok::Comma,
                 b';' => Tok::Semi,
                 b':' => Tok::Colon,
@@ -400,6 +405,9 @@ impl<'a> Lexer<'a> {
                     if self.peek() == b'=' {
                         self.bump();
                         Tok::EqEq
+                    } else if self.peek() == b'>' {
+                        self.bump();
+                        Tok::FatArrow
                     } else {
                         Tok::Eq
                     }

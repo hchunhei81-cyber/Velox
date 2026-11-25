@@ -33,7 +33,7 @@ pub fn generate_wrapper(libname: &str, fns: &[FfiFn]) -> String {
 
 fn argtype(t: &Ty) -> &'static str {
     match t {
-        Ty::I64 => "ctypes.c_int64",
+        Ty::I64 | Ty::ArrayI64 => "ctypes.c_int64",
         Ty::F64 => "ctypes.c_double",
         Ty::Bool => "ctypes.c_bool",
         Ty::Str => "ctypes.c_char_p",

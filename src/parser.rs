@@ -93,6 +93,16 @@ impl Parser {
         }
     }
     fn ty(&mut self) -> Result<Ty, String> {
+        if *self.peek() == Tok::LBracket {
+            self.bump();
+            let inner = self.ty()?;
+            self.eat(&Tok::RBracket)?;
+            return if inner == Ty::I64 {
+                Ok(Ty::ArrayI64)
+            } else {
+                Err("only [i64] arrays are currently supported".into())
+            };
+        }
         match self.bump() {
             Tok::Ident(s) => match s.as_str() {
                 "i64" => Ok(Ty::I64),
@@ -297,16 +307,27 @@ impl Parser {
                 self.bump();
                 let var = self.ident()?;
                 self.eat(&Tok::In)?;
+                self.condition_depth += 1;
                 let start = self.expr()?;
-                self.eat(&Tok::DotDot)?;
-                let end = self.range_end_expr()?;
-                let body = self.block()?;
-                Ok(Stmt::For {
-                    var,
-                    start,
-                    end,
-                    body,
-                })
+                self.condition_depth -= 1;
+                if *self.peek() == Tok::DotDot {
+                    self.bump();
+                    let end = self.range_end_expr()?;
+                    let body = self.block()?;
+                    Ok(Stmt::For {
+                        var,
+                        start,
+                        end,
+                        body,
+                    })
+                } else {
+                    let body = self.block()?;
+                    Ok(Stmt::ForEach {
+                        var,
+                        iter: start,
+                        body,
+                    })
+                }
             }
             Tok::Parallel => {
                 self.bump();
@@ -345,6 +366,13 @@ impl Parser {
                     match strip_located(&e) {
                         Expr::Var(name) => Ok(Stmt::Assign(name.clone(), value)),
                         Expr::Field(_, _) => Ok(Stmt::FieldAssign(e, value)),
+                        Expr::Index(base, index) => {
+                            if op.is_some() {
+                                Err("compound assignment to array elements is not supported".into())
+                            } else {
+                                Ok(Stmt::IndexAssign(base.clone(), index.clone(), value))
+                            }
+                        }
                         _ => Err("invalid assign target".into()),
                     }
                 } else if *self.peek() == Tok::PlusPlus || *self.peek() == Tok::MinusMinus {
@@ -541,16 +569,56 @@ impl Parser {
             return Ok(located(Expr::Not(Box::new(inner)), Span { start, end }));
         }
         let mut e = self.atom()?;
-        while *self.peek() == Tok::Dot {
-            self.bump();
-            let field = self.ident()?;
-            let start = expr_span(&e).map(|s| s.start);
-            let end = self.last_span.map(|s| s.end);
-            let field_expr = Expr::Field(Box::new(e), field);
-            e = match (start, end) {
-                (Some(start), Some(end)) => located(field_expr, Span { start, end }),
-                _ => field_expr,
-            };
+        loop {
+            if *self.peek() == Tok::Dot {
+                self.bump();
+                let field = self.ident()?;
+                let start = expr_span(&e).map(|s| s.start);
+                let field_end = self.last_span.map(|s| s.end);
+                let node = if *self.peek() == Tok::LParen {
+                    self.bump();
+                    let mut args = Vec::new();
+                    if *self.peek() != Tok::RParen {
+                        loop {
+                            args.push(self.expr()?);
+                            if *self.peek() == Tok::Comma {
+                                self.bump();
+                            } else {
+                                break;
+                            }
+                        }
+                    }
+                    self.eat(&Tok::RParen)?;
+                    Expr::MethodCall(Box::new(e), field, args)
+                } else {
+                    Expr::Field(Box::new(e), field)
+                };
+                let end = self.last_span.map(|s| s.end).or(field_end);
+                e = match (start, end) {
+                    (Some(start), Some(end)) => located(node, Span { start, end }),
+                    _ => node,
+                };
+            } else if *self.peek() == Tok::LBracket {
+                self.bump();
+                let base_start = expr_span(&e).map(|s| s.start);
+                let first = self.expr()?;
+                let node = if *self.peek() == Tok::DotDot {
+                    self.bump();
+                    let last = self.expr()?;
+                    Expr::Slice(Box::new(e), Box::new(first), Box::new(last))
+                } else {
+                    Expr::Index(Box::new(e), Box::new(first))
+                };
+                self.eat(&Tok::RBracket)?;
+                let start = base_start;
+                let end = self.last_span.map(|s| s.end);
+                e = match (start, end) {
+                    (Some(start), Some(end)) => located(node, Span { start, end }),
+                    _ => node,
+                };
+            } else {
+                break;
+            }
         }
         Ok(e)
     }
@@ -587,6 +655,52 @@ impl Parser {
             Tok::False => Ok(located(Expr::Bool(false), token_span)),
             Tok::Str(s) => Ok(located(Expr::Str(s), token_span)),
             Tok::Ident(name) => {
+                if name == "match" {
+                    // Prevent `x { ... }` from being parsed as a struct initializer.
+                    self.condition_depth += 1;
+                    let scrutinee_result = self.expr();
+                    self.condition_depth -= 1;
+                    let scrutinee = scrutinee_result?;
+
+                    self.eat(&Tok::LBrace)?;
+                    let mut arms: Vec<(Option<i64>, Expr)> = Vec::new();
+
+                    while *self.peek() != Tok::RBrace {
+                        let pattern = match self.bump() {
+                            Tok::Int(n) => Some(n),
+                            Tok::Ident(ref name) if name == "_" => None,
+                            other => {
+                                self.error_span = self.last_span;
+                                return Err(format!(
+                                    "expected integer pattern or `_` in match, got {:?}",
+                                    other
+                                ));
+                            }
+                        };
+
+                        self.eat(&Tok::FatArrow)?;
+                        let value = self.expr()?;
+                        arms.push((pattern, value));
+
+                        if *self.peek() == Tok::Comma {
+                            self.bump();
+                        } else {
+                            break;
+                        }
+                    }
+
+                    self.eat(&Tok::RBrace)?;
+                    let end = self.last_span.unwrap_or(token_span).end;
+
+                    return Ok(located(
+                        Expr::Match(Box::new(scrutinee), arms),
+                        Span {
+                            start: token_span.start,
+                            end,
+                        },
+                    ));
+                }
+
                 if name == "py" {
                     self.eat(&Tok::Dot)?;
                     let module = self.ident()?;
@@ -674,6 +788,31 @@ impl Parser {
                 } else {
                     Ok(located(Expr::Var(name), token_span))
                 }
+            }
+            Tok::LBracket => {
+                let mut items = Vec::new();
+                if *self.peek() != Tok::RBracket {
+                    loop {
+                        items.push(self.expr()?);
+                        if *self.peek() == Tok::Comma {
+                            self.bump();
+                            if *self.peek() == Tok::RBracket {
+                                break;
+                            }
+                        } else {
+                            break;
+                        }
+                    }
+                }
+                self.eat(&Tok::RBracket)?;
+                let end = self.last_span.unwrap_or(token_span).end;
+                Ok(located(
+                    Expr::Array(items),
+                    Span {
+                        start: token_span.start,
+                        end,
+                    },
+                ))
             }
             Tok::LParen => {
                 let e = self.expr()?;

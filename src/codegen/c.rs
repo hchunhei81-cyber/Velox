@@ -173,6 +173,28 @@ static int64_t velox_list_i64_len(int64_t handle) {
         velox_runtime_fail("integer list length overflow");
     return (int64_t)list->len;
 }
+
+static int64_t velox_list_i64_pop(int64_t handle) {
+    velox_i64_list *list = velox_get_i64_list(handle);
+    if (list->len == 0)
+        velox_runtime_fail("cannot pop from an empty integer list");
+    return list->data[--list->len];
+}
+
+static bool velox_list_i64_contains(int64_t handle, int64_t value) {
+    velox_i64_list *list = velox_get_i64_list(handle);
+    for (size_t i = 0; i < list->len; ++i) {
+        if (list->data[i] == value) return true;
+    }
+    return false;
+}
+
+static int64_t velox_list_i64_from_array(size_t count, const int64_t *values) {
+    int64_t handle = velox_list_i64_new();
+    for (size_t i = 0; i < count; ++i)
+        velox_list_i64_push(handle, values[i]);
+    return handle;
+}
 "#,
         );
         self.out.push_str(
@@ -498,6 +520,15 @@ static double velox_py_call_f64(const char *module_name,
                 let rhs = self.expr(value);
                 self.out.push_str(&format!("{}{} = {};\n", pad, lhs, rhs));
             }
+            Stmt::IndexAssign(base, index, value) => {
+                let b = self.expr(base);
+                let i = self.expr(index);
+                let v = self.expr(value);
+                self.out.push_str(&format!(
+                    "{}velox_list_i64_set({}, {}, {});\n",
+                    pad, b, i, v
+                ));
+            }
             Stmt::Return(e) => match e {
                 Some(e) => {
                     let ex = self.expr(e);
@@ -555,6 +586,9 @@ static double velox_py_call_f64(const char *module_name,
                 end,
                 body,
             } => self.emit_for(var, start, end, body, ind),
+            Stmt::ForEach { var, iter, body } => {
+                self.emit_for_each(var, iter, body, ind);
+            }
             Stmt::ParallelFor {
                 var,
                 start,
@@ -600,6 +634,41 @@ static double velox_py_call_f64(const char *module_name,
             v = c_var,
             s = s,
             e = bound
+        ));
+
+        for stmt in body {
+            self.emit_stmt(stmt, ind + 2);
+        }
+
+        self.out.push_str(&format!("{}  }}\n", pad));
+        self.out.push_str(&format!("{}}}\n", pad));
+        self.var_ty = saved;
+    }
+
+    fn emit_for_each(&mut self, var: &str, iter: &Expr, body: &[Stmt], ind: usize) {
+        let pad = "  ".repeat(ind);
+        let handle = self.fresh_temp();
+        let length = self.fresh_temp();
+        let index = self.fresh_temp();
+        let array = self.expr(iter);
+        let c_var = c_var_name(var);
+        let saved = self.var_ty.clone();
+        self.var_ty.insert(var.to_string(), Ty::I64);
+
+        self.out.push_str(&format!("{}{{\n", pad));
+        self.out
+            .push_str(&format!("{}  int64_t {} = {};\n", pad, handle, array));
+        self.out.push_str(&format!(
+            "{}  int64_t {} = velox_list_i64_len({});\n",
+            pad, length, handle
+        ));
+        self.out.push_str(&format!(
+            "{}  for (int64_t {} = 0; {} < {}; {}++) {{\n",
+            pad, index, index, length, index
+        ));
+        self.out.push_str(&format!(
+            "{}    int64_t {} = velox_list_i64_get({}, {});\n",
+            pad, c_var, handle, index
         ));
 
         for stmt in body {
@@ -675,13 +744,26 @@ static double velox_py_call_f64(const char *module_name,
         match e {
             Expr::Located(inner, _) => self.expr_ty(inner),
             Expr::Ternary(_, yes, _) => self.expr_ty(yes),
+            Expr::Match(_, arms) => arms
+                .first()
+                .map(|(_, value)| self.expr_ty(value))
+                .unwrap_or(Ty::I64),
             Expr::Int(_) => Ty::I64,
             Expr::Float(_) => Ty::F64,
             Expr::Bool(_) => Ty::Bool,
             Expr::Not(_) => Ty::Bool,
             Expr::Neg(inner) => self.expr_ty(inner),
             Expr::Str(_) => Ty::Str,
+            Expr::Array(_) => Ty::ArrayI64,
+            Expr::Index(_, _) => Ty::I64,
+            Expr::Slice(_, _, _) => Ty::Str,
             Expr::Var(n) => self.var_ty.get(n).cloned().unwrap_or(Ty::I64),
+            Expr::MethodCall(_, method, _) => match method.as_str() {
+                "contains" => Ty::Bool,
+                "push" => Ty::Void,
+                "pop" | "len" => Ty::I64,
+                _ => Ty::I64,
+            },
             Expr::Call(n, _) => self.fn_ret.get(n).cloned().unwrap_or(Ty::I64),
             Expr::PythonCall { .. } => Ty::F64,
             Expr::StructInit(n, _) => Ty::Struct(n.clone()),
@@ -725,6 +807,28 @@ static double velox_py_call_f64(const char *module_name,
                 let n = self.expr(no);
                 format!("({} ? {} : {})", c, y, n)
             }
+            Expr::Match(scrutinee, arms) => {
+                let selector = self.expr(scrutinee);
+                let mut fallback = "0".to_string();
+
+                for (pattern, value) in arms.iter().rev() {
+                    let branch = self.expr(value);
+                    match pattern {
+                        Some(n) => {
+                            fallback = format!(
+                                "({} == {} ? {} : {})",
+                                "velox_match_value", n, branch, fallback
+                            );
+                        }
+                        None => fallback = branch,
+                    }
+                }
+
+                format!(
+                    "({{ int64_t velox_match_value = (int64_t)({}); {}; }})",
+                    selector, fallback
+                )
+            }
             Expr::Not(inner) => format!("(!{})", self.expr(inner)),
             Expr::Neg(inner) => {
                 let value = self.expr(inner);
@@ -751,6 +855,32 @@ static double velox_py_call_f64(const char *module_name,
                 }
             }
             Expr::Str(s) => format!("\"{}\"", escape_c_string(s)),
+            Expr::Array(items) => {
+                let values: Vec<String> = items.iter().map(|item| self.expr(item)).collect();
+                if values.is_empty() {
+                    "velox_list_i64_from_array(0, (int64_t[]){0})".into()
+                } else {
+                    format!(
+                        "velox_list_i64_from_array({}, (int64_t[]){{{}}})",
+                        values.len(),
+                        values.join(", ")
+                    )
+                }
+            }
+            Expr::Index(base, index) => {
+                let getter = if self.expr_ty(base) == Ty::Str {
+                    "velox_str_byte_at"
+                } else {
+                    "velox_list_i64_get"
+                };
+                format!("{}({}, {})", getter, self.expr(base), self.expr(index))
+            }
+            Expr::Slice(base, start, end) => format!(
+                "velox_str_slice({}, {}, {})",
+                self.expr(base),
+                self.expr(start),
+                self.expr(end)
+            ),
             Expr::Var(v) => c_var_name(v),
             Expr::Field(base, field) => format!("({}).{}", self.expr(base), c_field_name(field)),
             Expr::StructInit(name, fields) => {
@@ -832,6 +962,22 @@ static double velox_py_call_f64(const char *module_name,
                     args.len(),
                     values.join(", ")
                 )
+            }
+            Expr::MethodCall(receiver, method, args) => {
+                let handle = self.expr(receiver);
+                match method.as_str() {
+                    "push" => {
+                        let value = self.expr(&args[0]);
+                        format!("velox_list_i64_push({}, {})", handle, value)
+                    }
+                    "pop" => format!("velox_list_i64_pop({})", handle),
+                    "contains" => {
+                        let value = self.expr(&args[0]);
+                        format!("velox_list_i64_contains({}, {})", handle, value)
+                    }
+                    "len" => format!("velox_list_i64_len({})", handle),
+                    _ => "0".into(),
+                }
             }
             Expr::Call(n, args) => {
                 let builtin = match n.as_str() {
@@ -934,7 +1080,7 @@ fn escape_c_string(s: &str) -> String {
 
 fn c_ty(t: &Ty) -> String {
     match t {
-        Ty::I64 => "int64_t".into(),
+        Ty::I64 | Ty::ArrayI64 => "int64_t".into(),
         Ty::F64 => "double".into(),
         Ty::Bool => "bool".into(),
         Ty::Str => "velox_str".into(),
@@ -955,7 +1101,7 @@ fn expr_root_var(expr: &Expr) -> Option<&str> {
     match expr {
         Expr::Located(inner, _) => expr_root_var(inner),
         Expr::Var(name) => Some(name),
-        Expr::Field(base, _) => expr_root_var(base),
+        Expr::Field(base, _) | Expr::Index(base, _) => expr_root_var(base),
         _ => None,
     }
 }
@@ -1048,6 +1194,19 @@ fn analyze_parallel_block(
                 count_parallel_reads(value, outer, locals, access);
             }
 
+            Stmt::IndexAssign(base, index, value) => {
+                if let Some(root) = expr_root_var(base) {
+                    if outer.contains(root) && !locals.contains(root) {
+                        return Err(format!(
+                            "E0601: parallel for cannot modify shared array `{}`",
+                            root
+                        ));
+                    }
+                }
+                count_parallel_reads(base, outer, locals, access);
+                count_parallel_reads(index, outer, locals, access);
+                count_parallel_reads(value, outer, locals, access);
+            }
             Stmt::If(cond, then_body, else_body) => {
                 count_parallel_reads(cond, outer, locals, access);
 
@@ -1093,6 +1252,13 @@ fn analyze_parallel_block(
                 analyze_parallel_block(body, outer, &mut nested_locals, access)?;
             }
 
+            Stmt::ForEach { var, iter, body } => {
+                count_parallel_reads(iter, outer, locals, access);
+                let mut nested_locals = locals.clone();
+                nested_locals.insert(var.clone());
+                analyze_parallel_block(body, outer, &mut nested_locals, access)?;
+            }
+
             Stmt::ParallelFor { .. } => {
                 return Err(
                     "E0605: nested parallel for loops are not currently supported".to_string(),
@@ -1130,13 +1296,39 @@ fn count_parallel_reads(
             count_parallel_reads(yes, outer, locals, access);
             count_parallel_reads(no, outer, locals, access);
         }
+        Expr::Match(scrutinee, arms) => {
+            count_parallel_reads(scrutinee, outer, locals, access);
+            for (_, value) in arms {
+                count_parallel_reads(value, outer, locals, access);
+            }
+        }
 
         Expr::Call(_, args) | Expr::PythonCall { args, .. } => {
             for arg in args {
                 count_parallel_reads(arg, outer, locals, access);
             }
         }
+        Expr::MethodCall(receiver, _, args) => {
+            count_parallel_reads(receiver, outer, locals, access);
+            for arg in args {
+                count_parallel_reads(arg, outer, locals, access);
+            }
+        }
         Expr::Field(base, _) => count_parallel_reads(base, outer, locals, access),
+        Expr::Index(base, index) => {
+            count_parallel_reads(base, outer, locals, access);
+            count_parallel_reads(index, outer, locals, access);
+        }
+        Expr::Slice(base, start, end) => {
+            count_parallel_reads(base, outer, locals, access);
+            count_parallel_reads(start, outer, locals, access);
+            count_parallel_reads(end, outer, locals, access);
+        }
+        Expr::Array(items) => {
+            for item in items {
+                count_parallel_reads(item, outer, locals, access);
+            }
+        }
         Expr::StructInit(_, fields) => {
             for (_, e) in fields {
                 count_parallel_reads(e, outer, locals, access);
@@ -1181,12 +1373,38 @@ fn count_var_occurrences(expr: &Expr, target: &str) -> usize {
                 + count_var_occurrences(yes, target)
                 + count_var_occurrences(no, target)
         }
+        Expr::Match(scrutinee, arms) => {
+            count_var_occurrences(scrutinee, target)
+                + arms
+                    .iter()
+                    .map(|(_, value)| count_var_occurrences(value, target))
+                    .sum::<usize>()
+        }
 
         Expr::Call(_, args) | Expr::PythonCall { args, .. } => args
             .iter()
             .map(|arg| count_var_occurrences(arg, target))
             .sum(),
+        Expr::MethodCall(receiver, _, args) => {
+            count_var_occurrences(receiver, target)
+                + args
+                    .iter()
+                    .map(|arg| count_var_occurrences(arg, target))
+                    .sum::<usize>()
+        }
         Expr::Field(base, _) => count_var_occurrences(base, target),
+        Expr::Index(base, index) => {
+            count_var_occurrences(base, target) + count_var_occurrences(index, target)
+        }
+        Expr::Slice(base, start, end) => {
+            count_var_occurrences(base, target)
+                + count_var_occurrences(start, target)
+                + count_var_occurrences(end, target)
+        }
+        Expr::Array(items) => items
+            .iter()
+            .map(|item| count_var_occurrences(item, target))
+            .sum(),
         Expr::StructInit(_, fields) => fields
             .iter()
             .map(|(_, e)| count_var_occurrences(e, target))

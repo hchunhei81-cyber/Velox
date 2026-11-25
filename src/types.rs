@@ -84,6 +84,7 @@ pub struct Checker {
     python_imports: HashSet<String>,
     error_span: Cell<Option<Span>>,
     loop_depth: Cell<usize>,
+    parallel_depth: Cell<usize>,
 }
 
 fn strip_located(mut expr: &Expr) -> &Expr {
@@ -103,7 +104,7 @@ fn expr_span(expr: &Expr) -> Option<Span> {
 fn field_root_var(expr: &Expr) -> Option<&str> {
     match strip_located(expr) {
         Expr::Var(name) => Some(name),
-        Expr::Field(base, _) => field_root_var(base),
+        Expr::Field(base, _) | Expr::Index(base, _) => field_root_var(base),
         _ => None,
     }
 }
@@ -161,6 +162,7 @@ impl Checker {
             python_imports: HashSet::new(),
             error_span: Cell::new(None),
             loop_depth: Cell::new(0),
+            parallel_depth: Cell::new(0),
         }
     }
 
@@ -443,6 +445,35 @@ impl Checker {
                 }
                 Ok(false)
             }
+            Stmt::IndexAssign(base, index, value) => {
+                if parallel {
+                    return Err("E0403: array mutation is not allowed inside parallel for".into());
+                }
+                let root = field_root_var(base).ok_or_else(|| {
+                    "E0500: array assignment target must be rooted in a local variable".to_string()
+                })?;
+                let var = env
+                    .get(root)
+                    .ok_or_else(|| format!("E0100: undefined variable `{}`", root))?;
+                if !var.mutable {
+                    return Err(format!(
+                        "E0500: cannot modify array `{}` because it is immutable; declare it with `let mut`",
+                        root
+                    ));
+                }
+                if var.ty != Ty::ArrayI64 || self.check_expr(base, env, origin)? != Ty::ArrayI64 {
+                    return Err("E0308: indexed assignment requires an [i64] array".into());
+                }
+                if self.check_expr(index, env, origin)? != Ty::I64 {
+                    self.mark_error_span(expr_span(index));
+                    return Err("E0308: array index must have type i64".into());
+                }
+                if self.check_expr(value, env, origin)? != Ty::I64 {
+                    self.mark_error_span(expr_span(value));
+                    return Err("E0308: [i64] array elements must have type i64".into());
+                }
+                Ok(false)
+            }
             Stmt::Break | Stmt::Continue => {
                 if parallel {
                     return Err(
@@ -541,6 +572,31 @@ impl Checker {
                 result?;
                 Ok(false)
             }
+            Stmt::ForEach { var, iter, body } => {
+                if env.contains_key(var) {
+                    return Err(format!(
+                        "E0104: loop variable `{}` is declared more than once in this scope",
+                        var
+                    ));
+                }
+                if self.check_expr(iter, env, origin)? != Ty::ArrayI64 {
+                    self.mark_error_span(expr_span(iter));
+                    return Err("E0308: for-in iteration requires an [i64] array".into());
+                }
+                let mut inner = env.clone();
+                inner.insert(
+                    var.clone(),
+                    VarInfo {
+                        ty: Ty::I64,
+                        mutable: false,
+                    },
+                );
+                self.loop_depth.set(self.loop_depth.get() + 1);
+                let result = self.check_block(body, &mut inner, ret, origin, parallel);
+                self.loop_depth.set(self.loop_depth.get() - 1);
+                result?;
+                Ok(false)
+            }
             Stmt::ParallelFor {
                 var,
                 start,
@@ -574,7 +630,9 @@ impl Checker {
                     },
                 );
                 self.loop_depth.set(self.loop_depth.get() + 1);
+                self.parallel_depth.set(self.parallel_depth.get() + 1);
                 let result = self.check_block(body, &mut inner, ret, origin, true);
+                self.parallel_depth.set(self.parallel_depth.get() - 1);
                 self.loop_depth.set(self.loop_depth.get() - 1);
                 result?;
                 Ok(false)
@@ -616,10 +674,102 @@ impl Checker {
                 }
                 Ok(yt)
             }
+            Expr::Match(scrutinee, arms) => {
+                if self.check_expr(scrutinee, env, origin)? != Ty::I64 {
+                    self.mark_error_span(expr_span(scrutinee));
+                    return Err("E0308: match scrutinee must have type i64".into());
+                }
+
+                if arms.is_empty() {
+                    return Err("E0308: match must contain at least one arm".into());
+                }
+
+                let mut seen = std::collections::HashSet::new();
+                let mut has_wildcard = false;
+                let mut result_ty: Option<Ty> = None;
+
+                for (index, (pattern, value)) in arms.iter().enumerate() {
+                    match pattern {
+                        Some(n) => {
+                            if has_wildcard {
+                                return Err(
+                                    "E0308: wildcard pattern must be the final match arm".into()
+                                );
+                            }
+                            if !seen.insert(*n) {
+                                return Err(format!("E0308: duplicate match pattern `{}`", n));
+                            }
+                        }
+                        None => {
+                            if has_wildcard {
+                                return Err("E0308: duplicate wildcard match pattern".into());
+                            }
+                            has_wildcard = true;
+                            if index + 1 != arms.len() {
+                                return Err(
+                                    "E0308: wildcard pattern must be the final match arm".into()
+                                );
+                            }
+                        }
+                    }
+
+                    let branch_ty = self.check_expr(value, env, origin)?;
+                    if let Some(expected) = &result_ty {
+                        if *expected != branch_ty {
+                            self.mark_error_span(expr_span(value));
+                            return Err("E0308: match branches must have the same type".into());
+                        }
+                    } else {
+                        result_ty = Some(branch_ty);
+                    }
+                }
+
+                if !has_wildcard {
+                    return Err("E0308: match requires a final `_` wildcard arm".into());
+                }
+
+                Ok(result_ty.unwrap())
+            }
             Expr::Int(_) => Ok(Ty::I64),
             Expr::Float(_) => Ok(Ty::F64),
             Expr::Bool(_) => Ok(Ty::Bool),
             Expr::Str(_) => Ok(Ty::Str),
+            Expr::Array(items) => {
+                for item in items {
+                    if self.check_expr(item, env, origin)? != Ty::I64 {
+                        self.mark_error_span(expr_span(item));
+                        return Err("E0308: [i64] array elements must all have type i64".into());
+                    }
+                }
+                Ok(Ty::ArrayI64)
+            }
+            Expr::Index(base, index) => {
+                let base_ty = self.check_expr(base, env, origin)?;
+                if base_ty != Ty::ArrayI64 && base_ty != Ty::Str {
+                    self.mark_error_span(expr_span(base));
+                    return Err("E0308: indexing requires an [i64] array or str".into());
+                }
+                if self.check_expr(index, env, origin)? != Ty::I64 {
+                    self.mark_error_span(expr_span(index));
+                    return Err("E0308: index must have type i64".into());
+                }
+                Ok(Ty::I64)
+            }
+            Expr::Slice(base, start, end) => {
+                if self.check_expr(base, env, origin)? != Ty::Str {
+                    self.mark_error_span(expr_span(base));
+                    return Err("E0308: slicing requires a str".into());
+                }
+                if self.check_expr(start, env, origin)? != Ty::I64 {
+                    self.mark_error_span(expr_span(start));
+                    return Err("E0308: slice start must have type i64".into());
+                }
+                if self.check_expr(end, env, origin)? != Ty::I64 {
+                    self.mark_error_span(expr_span(end));
+                    return Err("E0308: slice end must have type i64".into());
+                }
+                Ok(Ty::Str)
+            }
             Expr::StructInit(name, values) => {
                 let info = self
                     .structs
@@ -833,6 +983,68 @@ impl Checker {
                     }
                 }
                 Ok(Ty::F64)
+            }
+            Expr::MethodCall(receiver, method, args) => {
+                if self.check_expr(receiver, env, origin)? != Ty::ArrayI64 {
+                    self.mark_error_span(expr_span(receiver));
+                    return Err(format!(
+                        "E0308: method `{}()` requires an [i64] array receiver",
+                        method
+                    ));
+                }
+
+                let (arity, ret, mutating) = match method.as_str() {
+                    "push" => (1, Ty::Void, true),
+                    "pop" => (0, Ty::I64, true),
+                    "contains" => (1, Ty::Bool, false),
+                    "len" => (0, Ty::I64, false),
+                    _ => {
+                        return Err(format!("E0502: unsupported array method `{}()`", method));
+                    }
+                };
+
+                if args.len() != arity {
+                    return Err(format!(
+                        "E0308: array method `{}()` expects {} argument(s), but {} were provided",
+                        method,
+                        arity,
+                        args.len()
+                    ));
+                }
+
+                if mutating {
+                    if self.parallel_depth.get() > 0 {
+                        return Err(
+                            "E0403: array mutation is not allowed inside parallel for".into()
+                        );
+                    }
+                    let root = field_root_var(receiver).ok_or_else(|| {
+                        format!(
+                            "E0500: array method `{}()` requires a mutable local array",
+                            method
+                        )
+                    })?;
+                    let var = env
+                        .get(root)
+                        .ok_or_else(|| format!("E0100: undefined variable `{}`", root))?;
+                    if !var.mutable {
+                        return Err(format!(
+                            "E0500: cannot call mutating method on immutable array `{}`; declare it with `let mut`",
+                            root
+                        ));
+                    }
+                }
+
+                if let Some(arg) = args.first() {
+                    if self.check_expr(arg, env, origin)? != Ty::I64 {
+                        self.mark_error_span(expr_span(arg));
+                        return Err(format!(
+                            "E0308: argument to array method `{}()` must have type i64",
+                            method
+                        ));
+                    }
+                }
+                Ok(ret)
             }
             Expr::Call(n, args) => {
                 if n == "print" || n == "println" || n == "write" {

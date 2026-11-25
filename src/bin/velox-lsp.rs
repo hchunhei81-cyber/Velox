@@ -616,6 +616,7 @@ fn semantic_tokens(source: &str) -> Value {
             | Tok::OrOr
             | Tok::Bang
             | Tok::Arrow
+            | Tok::FatArrow
             | Tok::DotDot
             | Tok::PlusPlus
             | Tok::PlusEq
@@ -663,6 +664,8 @@ fn semantic_tokens(source: &str) -> Value {
             | Tok::RParen
             | Tok::LBrace
             | Tok::RBrace
+            | Tok::LBracket
+            | Tok::RBracket
             | Tok::Comma
             | Tok::Semi
             | Tok::Colon
